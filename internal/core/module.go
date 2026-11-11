@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -147,6 +148,19 @@ func (e *Engine) Export(ctx context.Context) ([]string, error) {
 // Plan строит dry-run: для каждого модуля берёт самое свежее состояние другой машины и,
 // если оно новее нашего, считает изменения. «Побеждает последняя правка».
 func (e *Engine) Plan(ctx context.Context, only []string) ([]PlanItem, error) {
+	return e.plan(ctx, only, "")
+}
+
+// PlanFrom — dry-run «взять настройки этой машины» независимо от времени правок. Нужен для первичного
+// выравнивания с эталонной машиной: базовые снимки не считаются правками, и сами собой не применяются.
+func (e *Engine) PlanFrom(ctx context.Context, from string, only []string) ([]PlanItem, error) {
+	if from == "" {
+		return nil, errors.New("не указана машина-источник")
+	}
+	return e.plan(ctx, only, from)
+}
+
+func (e *Engine) plan(ctx context.Context, only []string, from string) ([]PlanItem, error) {
 	// Сначала фиксируем собственное состояние: если пользователь менял настройку локально позже,
 	// чем другая машина, его правка новее и не должна затираться.
 	if _, err := e.Export(ctx); err != nil {
@@ -155,6 +169,21 @@ func (e *Engine) Plan(ctx context.Context, only []string) ([]PlanItem, error) {
 	machines, err := e.State.Machines()
 	if err != nil {
 		return nil, err
+	}
+	if from != "" {
+		found := ""
+		for _, m := range machines {
+			if strings.EqualFold(m, from) {
+				found = m
+			}
+		}
+		switch {
+		case strings.EqualFold(from, e.Machine):
+			return nil, errors.New("нельзя взять настройки у самой этой машины")
+		case found == "":
+			return nil, fmt.Errorf("состояния машины %q нет в папке состояний (есть: %s)", from, strings.Join(machines, ", "))
+		}
+		machines = []string{found}
 	}
 	var items []PlanItem
 	for _, m := range e.selected(only) {
@@ -175,7 +204,7 @@ func (e *Engine) Plan(ctx context.Context, only []string) ([]PlanItem, error) {
 				best = sf
 			}
 		}
-		if best == nil || (self != nil && !best.ChangedAt.After(self.ChangedAt)) {
+		if best == nil || (from == "" && self != nil && !best.ChangedAt.After(self.ChangedAt)) {
 			continue
 		}
 		assets := e.State.AssetDir(best.Machine, m.Name())
@@ -196,7 +225,19 @@ func (e *Engine) Plan(ctx context.Context, only []string) ([]PlanItem, error) {
 // упал, все уже применённые в этом запуске модули откатываются, система остаётся как была.
 // Возвращает запуск (nil, если менять нечего) и применённый план.
 func (e *Engine) Apply(ctx context.Context, only []string) (*Run, []PlanItem, error) {
-	all, err := e.Plan(ctx, only)
+	return e.apply(ctx, only, "")
+}
+
+// ApplyFrom применяет настройки указанной машины (первичное выравнивание), со снимком и откатом, как Apply.
+func (e *Engine) ApplyFrom(ctx context.Context, from string, only []string) (*Run, []PlanItem, error) {
+	if from == "" {
+		return nil, nil, errors.New("не указана машина-источник")
+	}
+	return e.apply(ctx, only, from)
+}
+
+func (e *Engine) apply(ctx context.Context, only []string, from string) (*Run, []PlanItem, error) {
+	all, err := e.plan(ctx, only, from)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -150,6 +150,66 @@ func TestMachinesIgnoresServiceFolders(t *testing.T) {
 	}
 }
 
+// changedExport имитирует «машина уже была в сети, потом на ней что-то поменяли»: сначала базовый снимок
+// с другими данными, затем настоящий. Второй снимок — правка, у него свежий ChangedAt.
+func changedExport(ctx context.Context, e *Engine) {
+	for _, m := range e.Modules {
+		_, _ = e.State.Write(e.Machine, m.Name(), json.RawMessage(`{"v":"<до правки>"}`), e.now())
+	}
+	_, _ = e.Export(ctx)
+}
+
+// Первый снимок машины — это «база», а не правка: иначе машина, запустившая агент позже, выглядела бы новее
+// и навязала бы свои настройки эталонной машине.
+func TestFirstExportIsBaselineNotAChange(t *testing.T) {
+	state, clk := t.TempDir(), &clock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	ctx := context.Background()
+	pc, laptop := &fakeModule{name: "theme", value: "pc-theme"}, &fakeModule{name: "theme", value: "laptop-theme"}
+	PC, Laptop := machine(t, "PC", state, clk, pc), machine(t, "LAPTOP", state, clk, laptop)
+
+	PC.Export(ctx)
+	Laptop.Export(ctx) // ноутбук запустил агент позже
+	if sf, _ := Laptop.State.Read("LAPTOP", "theme"); !sf.ChangedAt.IsZero() {
+		t.Fatalf("первый снимок должен быть базой (нулевое время), а не %v", sf.ChangedAt)
+	}
+	for name, e := range map[string]*Engine{"ПК": PC, "ноутбук": Laptop} {
+		if plan, err := e.Plan(ctx, nil); err != nil || len(plan) != 0 {
+			t.Fatalf("%s: при двух базовых снимках ничего не должно применяться само: %+v err=%v", name, plan, err)
+		}
+	}
+	if pc.value != "pc-theme" || laptop.value != "laptop-theme" {
+		t.Fatal("значения изменились")
+	}
+}
+
+// Первичное выравнивание делается явно: «взять настройки с эталонной машины».
+func TestPlanFromForcesSourceMachine(t *testing.T) {
+	state, clk := t.TempDir(), &clock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	ctx := context.Background()
+	pc, laptop := &fakeModule{name: "theme", value: "pc-theme"}, &fakeModule{name: "theme", value: "laptop-theme"}
+	PC, Laptop := machine(t, "PC", state, clk, pc), machine(t, "LAPTOP", state, clk, laptop)
+	PC.Export(ctx)
+	Laptop.Export(ctx)
+
+	plan, err := Laptop.PlanFrom(ctx, "pc", nil) // имя машины без учёта регистра
+	if err != nil || len(plan) != 1 || plan[0].Source != "PC" || plan[0].Changes[0].After != "pc-theme" {
+		t.Fatalf("plan=%+v err=%v", plan, err)
+	}
+	if _, _, err := Laptop.ApplyFrom(ctx, "PC", nil); err != nil || laptop.value != "pc-theme" {
+		t.Fatalf("value=%s err=%v", laptop.value, err)
+	}
+	// После выравнивания ПК не получает ничего обратно: данные те же.
+	if plan, _ := PC.Plan(ctx, nil); len(plan) != 0 {
+		t.Fatalf("ПК получил план после выравнивания: %+v", plan)
+	}
+	if _, err := Laptop.PlanFrom(ctx, "NOBODY", nil); err == nil {
+		t.Fatal("неизвестная машина-источник должна быть ошибкой")
+	}
+	if _, err := Laptop.PlanFrom(ctx, "LAPTOP", nil); err == nil {
+		t.Fatal("взять настройки у самой себя нельзя")
+	}
+}
+
 func TestUnchangedExportKeepsChangedAt(t *testing.T) {
 	state, clk := t.TempDir(), &clock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	A := machine(t, "A", state, clk, &fakeModule{name: "m", value: "v"})
@@ -169,7 +229,7 @@ func TestApplyVerifyRollback(t *testing.T) {
 	a1, b1 := &fakeModule{name: "theme", value: "new"}, &fakeModule{name: "theme", value: "old"}
 	A, B := machine(t, "A", state, clk, a1), machine(t, "B", state, clk, b1)
 	B.Export(ctx)
-	A.Export(ctx) // A новее
+	changedExport(ctx, A) // на A была правка: A новее
 
 	run, _, err := B.Apply(ctx, nil)
 	if err != nil || b1.value != "new" {
@@ -194,7 +254,7 @@ func TestFailureRollsBackWholeRun(t *testing.T) {
 	b1, b2 := &fakeModule{name: "one", value: "old1"}, &fakeModule{name: "two", value: "old2", failOn: "A2"}
 	A, B := machine(t, "A", state, clk, a1, a2), machine(t, "B", state, clk, b1, b2)
 	B.Export(ctx)
-	A.Export(ctx)
+	changedExport(ctx, A)
 
 	_, _, err := B.Apply(ctx, nil)
 	if err == nil {
@@ -229,7 +289,7 @@ func TestBrokenModulePlanDoesNotStopOthers(t *testing.T) {
 	b2 := &brokenPlanModule{fakeModule{name: "broken", value: "old"}}
 	A, B := machine(t, "A", state, clk, a1, a2), machine(t, "B", state, clk, b1, b2)
 	B.Export(ctx)
-	A.Export(ctx)
+	changedExport(ctx, A)
 
 	plan, err := B.Plan(ctx, nil)
 	if err != nil || len(plan) != 2 || plan[1].Err == nil {
@@ -250,7 +310,7 @@ func TestOnlyFilterAndJournalReadable(t *testing.T) {
 	b1, b2 := mk("old")
 	A, B := machine(t, "A", state, clk, a1, a2), machine(t, "B", state, clk, b1, b2)
 	B.Export(ctx)
-	A.Export(ctx)
+	changedExport(ctx, A)
 
 	if _, _, err := B.Apply(ctx, []string{"two"}); err != nil {
 		t.Fatal(err)

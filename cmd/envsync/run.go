@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -25,8 +26,17 @@ func (e *env) cmdRun(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	noUI := fs.Bool("no-ui", false, "не запускать веб-интерфейс и значок в трее")
 	noTray := fs.Bool("no-tray", false, "не показывать значок в трее (веб-интерфейс остаётся)")
+	background := fs.Bool("background", false, "фоновый режим для автозапуска: без окна консоли, лог в agent.log")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *background {
+		l, err := backgroundLogger(filepath.Join(e.s.BaseDir(), "agent.log"))
+		if err != nil {
+			return err
+		}
+		e.logger = l
+		hideConsole()
 	}
 	cenv, err := core.CurrentEnv()
 	if err != nil {
@@ -77,6 +87,15 @@ func (e *env) cmdRun(ctx context.Context, args []string) error {
 			}
 		}()
 		go be.StatusLoop(runCtx, 15*time.Second)
+		// Настройки снимаются каждые 5 минут, список программ раз в час (winget export небыстрый).
+		go be.SnapshotLoop(runCtx, 5*time.Minute, time.Hour, func(ctx context.Context) error {
+			mgr, _, err := e.softwareManager()
+			if err != nil {
+				return err
+			}
+			_, err = mgr.Scan(ctx)
+			return err
+		}, e.logger.Printf)
 		uiURL = func() string { return ui.URL(e.s.UIPort, token) }
 		fmt.Println("Веб-интерфейс:", uiURL())
 	}

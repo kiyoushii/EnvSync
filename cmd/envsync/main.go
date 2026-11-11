@@ -24,6 +24,10 @@ const usage = `envsync — синхронизация среды Windows
   id                            показать Device ID и имя этой машины в Tailscale
   run [--no-tray] [--no-ui]     запустить Syncthing, предохранитель, веб-интерфейс и значок в трее (до Ctrl+C или «Выход» в трее)
   ui                            открыть веб-интерфейс запущенного агента в браузере
+  install / uninstall           включить или убрать автозапуск агента при входе в систему (задача планировщика, без администратора)
+  update                        обновить Syncthing и Tailscale через winget (после подтверждения)
+  version                       версии агента, Syncthing, Tailscale и состояние автозапуска
+  wait [--timeout 60]           дождаться, пока Syncthing агента ответит (код возврата 0 — готов; для скриптов)
   checklist                     чек-лист ручной настройки новой машины (то, что EnvSync не переносит)
   status                        состояние Tailscale, Syncthing и связи со вторым устройством
   audit                         проверить, что конфиг Syncthing слушает только Tailscale
@@ -99,6 +103,16 @@ func dispatch(ctx context.Context, cmd string, args []string) error {
 		return e.cmdRun(ctx, args)
 	case "ui":
 		return e.cmdUI()
+	case "wait":
+		return e.cmdWait(ctx, args)
+	case "install":
+		return e.cmdInstall(ctx, args)
+	case "uninstall":
+		return e.cmdUninstall(ctx)
+	case "update":
+		return e.cmdUpdate(ctx)
+	case "version":
+		return e.cmdVersion(ctx)
 	case "checklist":
 		return e.cmdChecklist()
 	case "status":
@@ -256,8 +270,12 @@ func (e *env) cmdPair(ctx context.Context, args []string) error {
 	return nil
 }
 
+// stdin — один общий читатель на весь процесс: если ответы подают через pipe, новый буферизованный читатель
+// на каждый вопрос съел бы все строки сразу, и следующий вопрос получил бы пустой ввод.
+var stdin = bufio.NewReader(os.Stdin)
+
 func confirm(prompt string) bool {
 	fmt.Print(prompt)
-	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	line, _ := stdin.ReadString('\n')
 	return strings.EqualFold(strings.TrimSpace(line), "y")
 }

@@ -137,6 +137,48 @@ func (b *Backend) StatusLoop(ctx context.Context, every time.Duration) {
 	}
 }
 
+// SnapshotLoop периодически снимает настройки этой машины (и, если задано, список программ), чтобы вторая
+// машина видела актуальное состояние без ручного envsync settings export. Только чтение системы.
+func (b *Backend) SnapshotLoop(ctx context.Context, settingsEvery, softwareEvery time.Duration, softwareScan func(context.Context) error, log func(string, ...any)) {
+	run := func(name string, f func() error) {
+		if err := f(); err != nil && ctx.Err() == nil && log != nil {
+			log("снимок %s: %v", name, err)
+		}
+	}
+	settings := func() error {
+		if b.Engine == nil {
+			return nil
+		}
+		eng, err := b.Engine()
+		if err != nil {
+			return err
+		}
+		_, err = eng.Export(ctx)
+		return err
+	}
+	software := func() error {
+		if softwareScan == nil {
+			return nil
+		}
+		return softwareScan(ctx)
+	}
+	run("настроек", settings)
+	run("программ", software)
+	st, sw := time.NewTicker(settingsEvery), time.NewTicker(softwareEvery)
+	defer st.Stop()
+	defer sw.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-st.C:
+			run("настроек", settings)
+		case <-sw.C:
+			run("программ", software)
+		}
+	}
+}
+
 // Others читает последние известные статусы других машин из папки состояний.
 func (b *Backend) Others(ctx context.Context) ([]ui.Status, error) {
 	dir := core.StateDir{Root: b.S.StateDir()}

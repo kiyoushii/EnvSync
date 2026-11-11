@@ -76,14 +76,22 @@ func (d StateDir) Write(machine, module string, data json.RawMessage, now time.T
 	if err != nil {
 		return false, fmt.Errorf("состояние %s: %w", module, err)
 	}
-	if prev, err := d.Read(machine, module); err != nil {
+	prev, err := d.Read(machine, module)
+	if err != nil {
 		return false, err
-	} else if prev != nil {
+	}
+	if prev != nil {
 		if oldCanon, err := canonical(prev.Data); err == nil && bytes.Equal(oldCanon, newCanon) {
 			return false, nil
 		}
 	}
-	sf := StateFile{Schema: StateSchema, Machine: machine, Module: module, ChangedAt: now.UTC(), Data: newCanon}
+	// Самый первый снимок — «база», а не правка: ChangedAt нулевой. Иначе машина, которая запустила агент позже,
+	// выглядела бы «новее» и навязала бы свои настройки остальным. Первичное выравнивание делается явно (PlanFrom).
+	changedAt := now.UTC()
+	if prev == nil {
+		changedAt = time.Time{}
+	}
+	sf := StateFile{Schema: StateSchema, Machine: machine, Module: module, ChangedAt: changedAt, Data: newCanon}
 	out, err := json.MarshalIndent(sf, "", "  ")
 	if err != nil {
 		return false, err

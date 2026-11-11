@@ -14,8 +14,12 @@ import (
 const settingsUsage = `envsync settings — синхронизация настроек Windows, оформления и конфигов приложений
 
   export                  снять состояние этой машины в папку состояний (её синкает Syncthing)
-  plan [--only a,b]       dry-run: что изменится на этой машине по состоянию другой (ничего не меняет)
-  apply [--only a,b] [--yes]   применить (сначала dry-run и подтверждение, перед изменением делается снимок)
+  plan [--only a,b] [--from МАШИНА]   dry-run: что изменится на этой машине по состоянию другой (ничего не меняет)
+  apply [--only a,b] [--from МАШИНА] [--yes]   применить (сначала dry-run и подтверждение, перед изменением делается снимок)
+
+  --from МАШИНА: взять настройки указанной машины независимо от времени правок (первичное выравнивание
+  с эталоном, например на новой машине: envsync settings apply --from DESKTOP-LS890QQ). Без --from
+  применяется только то, что на другой машине поменяли позже, чем здесь.
   rollback [id]           откатить последнее применение (или указанное)
   runs                    список применений, которые можно откатить
   journal [-n 30]         журнал аудита: что, когда и откуда менялось
@@ -59,11 +63,11 @@ func (e *env) cmdSettings(ctx context.Context, args []string) error {
 		fmt.Println("Папка состояний:", e.s.StateDir())
 		return err
 	case "plan":
-		only, _, err := parseOnly(rest)
+		f, err := parseOnly(rest)
 		if err != nil {
 			return err
 		}
-		items, err := eng.Plan(ctx, only)
+		items, err := f.plan(ctx, eng)
 		if err != nil {
 			return err
 		}
@@ -124,17 +128,32 @@ func (e *env) cmdSettings(ctx context.Context, args []string) error {
 	}
 }
 
-func parseOnly(args []string) (only []string, yes bool, err error) {
+type settingsFlags struct {
+	only []string
+	yes  bool
+	from string
+}
+
+func parseOnly(args []string) (settingsFlags, error) {
 	fs := flag.NewFlagSet("settings", flag.ContinueOnError)
 	list := fs.String("only", "", "только эти модули через запятую")
 	y := fs.Bool("yes", false, "не спрашивать подтверждение")
-	if err = fs.Parse(args); err != nil {
-		return
+	from := fs.String("from", "", "взять настройки этой машины (первичное выравнивание с эталоном), независимо от времени правок")
+	if err := fs.Parse(args); err != nil {
+		return settingsFlags{}, err
 	}
+	f := settingsFlags{yes: *y, from: *from}
 	if *list != "" {
-		only = strings.Split(*list, ",")
+		f.only = strings.Split(*list, ",")
 	}
-	return only, *y, nil
+	return f, nil
+}
+
+func (f settingsFlags) plan(ctx context.Context, eng *core.Engine) ([]core.PlanItem, error) {
+	if f.from != "" {
+		return eng.PlanFrom(ctx, f.from, f.only)
+	}
+	return eng.Plan(ctx, f.only)
 }
 
 func printPlan(items []core.PlanItem) {
@@ -165,11 +184,11 @@ func printPlan(items []core.PlanItem) {
 }
 
 func (e *env) settingsApply(ctx context.Context, eng *core.Engine, args []string) error {
-	only, yes, err := parseOnly(args)
+	f, err := parseOnly(args)
 	if err != nil {
 		return err
 	}
-	items, err := eng.Plan(ctx, only)
+	items, err := f.plan(ctx, eng)
 	if err != nil {
 		return err
 	}
@@ -182,11 +201,16 @@ func (e *env) settingsApply(ctx context.Context, eng *core.Engine, args []string
 		return nil
 	}
 	fmt.Println("Перед применением сохраняется снимок «до»; откат: envsync settings rollback")
-	if !yes && !confirm("Применить? [y/N] ") {
+	if !f.yes && !confirm("Применить? [y/N] ") {
 		fmt.Println("Отменено, ничего не изменено.")
 		return nil
 	}
-	run, _, err := eng.Apply(ctx, only)
+	var run *core.Run
+	if f.from != "" {
+		run, _, err = eng.ApplyFrom(ctx, f.from, f.only)
+	} else {
+		run, _, err = eng.Apply(ctx, f.only)
+	}
 	if run != nil {
 		fmt.Printf("Запуск %s. Откат: envsync settings rollback %s\n", run.ID, run.ID)
 	}

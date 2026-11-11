@@ -486,11 +486,16 @@ func TestIntegrationSettingsTravelViaSyncthing(t *testing.T) {
 	}
 	engA, engB := engine("PC-A", stateA, modA), engine("PC-B", stateB, modB)
 
-	// B фиксирует своё состояние раньше, чем A меняет своё: правка A новее.
+	// Обе машины снимают базу (первый снимок не считается правкой), затем на A меняют тему: правка A новее.
 	if _, err := engB.Export(ctx); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(1100 * time.Millisecond)
+	wantValue, wantPayload := modA.value, modA.payload
+	modA.value, modA.payload = "dark", "old-wallpaper"
+	if _, err := engA.Export(ctx); err != nil {
+		t.Fatal(err)
+	}
+	modA.value, modA.payload = wantValue, wantPayload
 	if _, err := engA.Export(ctx); err != nil {
 		t.Fatal(err)
 	}
