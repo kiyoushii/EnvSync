@@ -1,4 +1,4 @@
-<#
+﻿<#
   measure.ps1 — замер среды для EnvSync. ТОЛЬКО ЧТЕНИЕ: ничего не меняет в системе.
   Запуск (обычный PowerShell, не от администратора), на каждой из двух машин:
       powershell -ExecutionPolicy Bypass -File .\measure.ps1
