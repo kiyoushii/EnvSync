@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kiyoushii/EnvSync/internal/core"
+	"github.com/kiyoushii/EnvSync/internal/proc"
 )
 
 // Agent запускает Syncthing как дочерний процесс и следит, чтобы он работал
@@ -56,7 +57,7 @@ func (a *Agent) Init(ctx context.Context, bin string) (string, error) {
 			return "", err
 		}
 		a.Log.Printf("создаю ключи и конфиг Syncthing в %s", home)
-		out, err := exec.CommandContext(ctx, bin, "generate", "--home", home, "--no-port-probing").CombinedOutput()
+		out, err := proc.Command(ctx, bin, "generate", "--home", home, "--no-port-probing").CombinedOutput()
 		if err != nil {
 			return "", fmt.Errorf("syncthing generate: %w: %s", err, out)
 		}
@@ -66,7 +67,7 @@ func (a *Agent) Init(ctx context.Context, bin string) (string, error) {
 
 // DeviceID спрашивает ID у `syncthing device-id`. Запущенный Syncthing для этого не нужен.
 func DeviceID(ctx context.Context, bin, home string) (string, error) {
-	out, err := exec.CommandContext(ctx, bin, "device-id", "--home", home).Output()
+	out, err := proc.Command(ctx, bin, "device-id", "--home", home).Output()
 	if err != nil {
 		return "", fmt.Errorf("syncthing device-id: %w", err)
 	}
@@ -159,7 +160,8 @@ func (a *Agent) runOnce(ctx context.Context, bin string, ip netip.Addr) error {
 	}
 	client := NewClient(a.S.GUIPort, key)
 
-	cmd := exec.Command(bin, "serve",
+	// Контекст не передаём: останавливаем сами (сначала корректно через REST, см. stop).
+	cmd := proc.Command(context.Background(), bin, "serve",
 		"--home", a.S.SyncthingHome(),
 		"--no-browser",
 		"--no-upgrade",      // обновления только через winget

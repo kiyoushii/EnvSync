@@ -17,6 +17,7 @@ import (
 
 	"github.com/kiyoushii/EnvSync/internal/core"
 	"github.com/kiyoushii/EnvSync/internal/install"
+	"github.com/kiyoushii/EnvSync/internal/proc"
 	"github.com/kiyoushii/EnvSync/internal/transport"
 )
 
@@ -71,7 +72,7 @@ func (e *env) cmdInstall(ctx context.Context, args []string) error {
 	}
 	fmt.Println("Автозапуск включён. Агент стартует при следующем входе в систему.")
 	if *start || (!*yes && confirm("Запустить агента сейчас? [y/N] ")) {
-		cmd := exec.Command(target, "run", "--background")
+		cmd := proc.Command(context.Background(), target, "run", "--background") // без окна консоли
 		if err := cmd.Start(); err != nil {
 			return err
 		}

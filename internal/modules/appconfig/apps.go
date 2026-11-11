@@ -1,8 +1,10 @@
 package appconfig
 
 import (
-	"os/exec"
+	"context"
 	"strings"
+
+	"github.com/kiyoushii/EnvSync/internal/proc"
 )
 
 // DefaultApps — приложения и файлы по умолчанию. Это белый список: что здесь не названо, не берётся.
@@ -39,7 +41,7 @@ func DefaultApps() []App {
 
 // RunningProcesses спрашивает у Windows список запущенных процессов (tasklist) и возвращает их имена в нижнем регистре.
 func RunningProcesses() (map[string]bool, error) {
-	out, err := exec.Command("tasklist", "/FO", "CSV", "/NH").Output()
+	out, err := proc.Command(context.Background(), "tasklist", "/FO", "CSV", "/NH").Output()
 	if err != nil {
 		return nil, err
 	}

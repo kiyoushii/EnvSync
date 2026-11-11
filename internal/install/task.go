@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/kiyoushii/EnvSync/internal/proc"
 )
 
 // DefaultTaskName — имя задачи.
@@ -105,7 +107,7 @@ func utf16File(s string) []byte {
 }
 
 func schtasks(ctx context.Context, args ...string) (string, error) {
-	out, err := exec.CommandContext(ctx, "schtasks", args...).CombinedOutput()
+	out, err := proc.Command(ctx, "schtasks", args...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
 

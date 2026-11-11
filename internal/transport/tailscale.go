@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
-	"os/exec"
 	"strings"
+
+	"github.com/kiyoushii/EnvSync/internal/proc"
 )
 
 // TSNode — одна машина в tailnet (мы сами или соседняя).
@@ -96,7 +97,7 @@ type Runner func(ctx context.Context, name string, args ...string) ([]byte, erro
 
 // ExecRunner — настоящий запуск процесса.
 func ExecRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).Output()
+	return proc.Command(ctx, name, args...).Output()
 }
 
 // Tailscale — обёртка над tailscale CLI. Мы только читаем статус и ничего не меняем:

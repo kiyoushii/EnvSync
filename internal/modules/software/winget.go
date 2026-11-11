@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/kiyoushii/EnvSync/internal/core"
+	"github.com/kiyoushii/EnvSync/internal/proc"
 )
 
 // RealWinget вызывает настоящий winget.exe.
@@ -65,7 +66,8 @@ func (w RealWinget) Installed(ctx context.Context) (map[string]Package, error) {
 	}
 	defer os.RemoveAll(dir)
 	file := filepath.Join(dir, "export.json")
-	cmd := exec.CommandContext(ctx, w.bin(), "export", "-o", file, "--source", "winget", "--include-versions", "--accept-source-agreements")
+	// Список программ агент снимает в фоне раз в час: без окна консоли.
+	cmd := proc.Command(ctx, w.bin(), "export", "-o", file, "--source", "winget", "--include-versions", "--accept-source-agreements")
 	// winget export возвращает ненулевой код, если часть установленных программ не найдена в источниках;
 	// главное — файл. Поэтому код возврата смотрим только когда файла нет.
 	out, runErr := cmd.CombinedOutput()
