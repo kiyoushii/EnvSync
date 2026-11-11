@@ -156,6 +156,116 @@ func TestConflictNameParsing(t *testing.T) {
 	}
 }
 
+// valueModule — «настройка» в памяти для проверки синхронизации ПК ↔ ноутбук.
+type valueModule struct{ value string }
+
+func (m *valueModule) Name() string { return "theme" }
+func (m *valueModule) Export(context.Context, string) (json.RawMessage, error) {
+	return json.Marshal(map[string]string{"v": m.value})
+}
+func (m *valueModule) want(d json.RawMessage) string {
+	var st map[string]string
+	_ = json.Unmarshal(d, &st)
+	return st["v"]
+}
+func (m *valueModule) Plan(_ context.Context, d json.RawMessage, _ string) ([]core.Change, error) {
+	if w := m.want(d); w != m.value {
+		return []core.Change{{Target: "theme", Before: m.value, After: w}}, nil
+	}
+	return nil, nil
+}
+func (m *valueModule) Apply(_ context.Context, d json.RawMessage, _ string, snap *core.Snapshot) error {
+	if err := snap.PutJSON("before.json", m.value); err != nil {
+		return err
+	}
+	m.value = m.want(d)
+	return nil
+}
+func (m *valueModule) Rollback(_ context.Context, snap *core.Snapshot) error {
+	return snap.GetJSON("before.json", &m.value)
+}
+
+// Режим «ноутбук подтягивается сам, ПК с подтверждением».
+func TestTwoWaySyncAutoOnLaptopConfirmOnPC(t *testing.T) {
+	ctx := context.Background()
+	state := t.TempDir()
+	newMachine := func(name string, auto bool, mod *valueModule) *Backend {
+		b := newBackend(t, name, tsOK)
+		eng := &core.Engine{
+			Machine: name, State: core.StateDir{Root: state},
+			Snaps:   &core.SnapshotStore{Dir: filepath.Join(t.TempDir(), "snaps")},
+			Journal: b.Audit, Modules: []core.Module{mod},
+		}
+		b.Engine = func() (*core.Engine, error) { return eng, nil }
+		b.AutoApply = auto
+		return b
+	}
+	pcMod, laptopMod := &valueModule{"dark"}, &valueModule{"light"}
+	pc, laptop := newMachine("PC", false, pcMod), newMachine("LAPTOP", true, laptopMod)
+	tick := func(b *Backend) {
+		t.Helper()
+		if err := b.SettingsTick(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Обе машины снимают базу: ничего само не применяется, хотя значения разные.
+	tick(pc)
+	tick(laptop)
+	if laptopMod.value != "light" || pc.Pending() != 0 {
+		t.Fatalf("база не должна применяться: laptop=%s pending=%d", laptopMod.value, pc.Pending())
+	}
+	// Первичное выравнивание ноутбука с ПК (явно, как в bootstrap): ноутбук стал как ПК.
+	eng, _ := laptop.Engine()
+	if _, _, err := eng.ApplyFrom(ctx, "PC", nil); err != nil || laptopMod.value != "dark" {
+		t.Fatalf("выравнивание: %s %v", laptopMod.value, err)
+	}
+
+	// Правка на ПК → ноутбук применяет сам при следующем шаге.
+	pcMod.value = "blue"
+	tick(pc)
+	tick(laptop)
+	if laptopMod.value != "blue" {
+		t.Fatalf("ноутбук должен подтянуть правку ПК сам: %s", laptopMod.value)
+	}
+	tick(pc)
+	if pc.Pending() != 0 {
+		t.Fatalf("после того как ноутбук подтянулся, на ПК ничего не должно ждать: %d", pc.Pending())
+	}
+
+	// Правка на ноутбуке → на ПК ждёт подтверждения и сама не применяется.
+	laptopMod.value = "green"
+	tick(laptop)
+	tick(pc)
+	if pcMod.value != "blue" || pc.Pending() != 1 {
+		t.Fatalf("ПК не должен применять сам: pc=%s pending=%d", pcMod.value, pc.Pending())
+	}
+	st, _ := pc.Self(ctx)
+	if st.PendingSettings != 1 || st.AutoApply {
+		t.Fatalf("статус ПК: pending=%d auto=%v", st.PendingSettings, st.AutoApply)
+	}
+
+	// Подтверждение на ПК → применено.
+	if msg, err := pc.ApplySettings(ctx, "theme"); err != nil || pcMod.value != "green" || pc.Pending() != 0 {
+		t.Fatalf("подтверждение: pc=%s pending=%d msg=%q err=%v", pcMod.value, pc.Pending(), msg, err)
+	}
+
+	// Ещё одна правка на ноутбуке, но на ПК «Оставить как здесь» → ноутбук возвращается к варианту ПК.
+	laptopMod.value = "red"
+	tick(laptop)
+	tick(pc)
+	if pc.Pending() != 1 {
+		t.Fatalf("правка ноутбука должна ждать: %d", pc.Pending())
+	}
+	if err := pc.KeepSettings(ctx, "theme"); err != nil {
+		t.Fatal(err)
+	}
+	tick(laptop)
+	if laptopMod.value != "green" || pcMod.value != "green" || pc.Pending() != 0 {
+		t.Fatalf("после «оставить как на ПК»: laptop=%s pc=%s pending=%d", laptopMod.value, pcMod.value, pc.Pending())
+	}
+}
+
 func TestJournalAndPlanWithoutEngine(t *testing.T) {
 	b := newBackend(t, "PC", tsOK)
 	if entries, err := b.Journal(10); err != nil || len(entries) != 0 {

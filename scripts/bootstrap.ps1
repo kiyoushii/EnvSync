@@ -24,6 +24,7 @@ param(
     [string]$ManifestRepo = '',                 # or a git URL of the private manifest repository containing envsync.yaml
     [string]$PeerName = '',                     # Tailscale name of the other machine (for pairing)
     [string]$PeerId = '',                       # Syncthing Device ID of the other machine
+    [switch]$AutoApply,                         # this machine follows the reference automatically (laptop); without it changes wait for confirmation (PC)
     [switch]$Yes,                               # do not ask for confirmation
     [switch]$DryRun                             # only print the steps
 )
@@ -128,6 +129,7 @@ Run-Step 'Create Syncthing keys and config (envsync init)' {
 
 # 7. start the agent in the background
 Run-Step 'Start the agent' {
+    if ($AutoApply) { Envsync settings auto on }
     Start-Process -FilePath $exe -ArgumentList 'run', '--background' -WindowStyle Hidden
     & $exe wait --timeout 90
     if ($LASTEXITCODE -ne 0) { Say '  the agent did not answer in 90 s; check %LOCALAPPDATA%\EnvSync\agent.log (the Windows Firewall may be waiting for your answer: allow PRIVATE networks only).' }

@@ -69,10 +69,12 @@ func openBrowser(url string) {
 }
 
 // levelOf сводит статус машины в один цвет.
-func levelOf(running bool, tsState string, paused bool, trips int, disconnected bool) (trayLevel, string) {
+func levelOf(running bool, tsState string, paused bool, trips, pending int, disconnected bool) (trayLevel, string) {
 	switch {
 	case trips > 0:
 		return levelBad, fmt.Sprintf("нужно решение: остановлено массовое удаление (%d)", trips)
+	case pending > 0:
+		return levelWarn, fmt.Sprintf("ждут подтверждения изменения настроек с другой машины (%d)", pending)
 	case !running:
 		return levelBad, "Syncthing не запущен"
 	case tsState != "Running":
@@ -101,6 +103,7 @@ func runTray(ctx context.Context, quit func(), be *app.Backend, uiURL func() str
 		go func() {
 			var last trayLevel = -1
 			paused := false
+			pendingNow := 0
 			refresh := func() {
 				st, err := be.Self(ctx)
 				if err != nil {
@@ -112,7 +115,8 @@ func runTray(ctx context.Context, quit func(), be *app.Backend, uiURL func() str
 						disconnected = false
 					}
 				}
-				lvl, text := levelOf(st.Syncthing.Running, st.Tailscale.State, st.Paused, len(st.Guard), disconnected)
+				lvl, text := levelOf(st.Syncthing.Running, st.Tailscale.State, st.Paused, len(st.Guard), st.PendingSettings, disconnected)
+				pendingNow = st.PendingSettings
 				if lvl != last {
 					systray.SetIcon(makeIcon(levelColor[lvl]))
 					last = lvl
@@ -137,7 +141,11 @@ func runTray(ctx context.Context, quit func(), be *app.Backend, uiURL func() str
 				case <-tick.C:
 					refresh()
 				case <-mOpen.ClickedCh:
-					openBrowser(uiURL())
+					if pendingNow > 0 {
+						openBrowser(uiURL() + "#plan") // сразу на экран подтверждения
+					} else {
+						openBrowser(uiURL())
+					}
 				case <-mPause.ClickedCh:
 					_ = be.SetPaused(ctx, !paused)
 					refresh()

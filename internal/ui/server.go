@@ -37,6 +37,8 @@ type Backend interface {
 	Conflicts(ctx context.Context) ([]Conflict, error)
 	NotSynced(ctx context.Context) ([]NotSyncedSection, error)
 	SettingsPlan(ctx context.Context) ([]PlanItem, error)
+	ApplySettings(ctx context.Context, module string) (string, error) // module "" = все
+	KeepSettings(ctx context.Context, module string) error
 	GuardAccept(ctx context.Context, folder string) error
 	GuardReject(ctx context.Context, folder string) (string, error)
 	SetPaused(ctx context.Context, paused bool) error
@@ -52,6 +54,10 @@ type Status struct {
 	Syncthing SyncthingStatus `json:"syncthing"`
 	Paused    bool            `json:"paused"`
 	Guard     []GuardTrip     `json:"guard"`
+	// PendingSettings — сколько модулей настроек с другой машины ждут подтверждения здесь.
+	PendingSettings int `json:"pendingSettings"`
+	// AutoApply — машина сама применяет свежие настройки других (без подтверждения).
+	AutoApply bool `json:"autoApply"`
 }
 
 type TailscaleStatus struct {
@@ -196,6 +202,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/guard/accept", s.api(true, s.handleGuardAccept))
 	mux.HandleFunc("/api/guard/reject", s.api(true, s.handleGuardReject))
 	mux.HandleFunc("/api/pause", s.api(true, s.handlePause))
+	mux.HandleFunc("/api/settings/apply", s.api(true, s.handleSettingsApply))
+	mux.HandleFunc("/api/settings/keep", s.api(true, s.handleSettingsKeep))
 
 	return s.hostGuard(securityHeaders(mux))
 }
@@ -359,6 +367,38 @@ func (s *Server) handleGuardReject(w http.ResponseWriter, r *http.Request) (any,
 		return nil, err
 	}
 	return map[string]string{"result": msg}, nil
+}
+
+// moduleParam — имя модуля настроек или пусто (все). Разрешены только простые имена.
+func moduleParam(r *http.Request) (string, error) {
+	m := strings.TrimSpace(r.URL.Query().Get("module"))
+	if len(m) > 32 || strings.ContainsAny(m, `/\. `) {
+		return "", errors.New("недопустимое имя модуля")
+	}
+	return m, nil
+}
+
+func (s *Server) handleSettingsApply(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := moduleParam(r)
+	if err != nil {
+		return nil, err
+	}
+	msg, err := s.B.ApplySettings(r.Context(), m)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{"result": msg}, nil
+}
+
+func (s *Server) handleSettingsKeep(w http.ResponseWriter, r *http.Request) (any, error) {
+	m, err := moduleParam(r)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.B.KeepSettings(r.Context(), m); err != nil {
+		return nil, err
+	}
+	return map[string]string{"result": "оставлено как на этой машине; другая машина вернётся к этому варианту"}, nil
 }
 
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) (any, error) {

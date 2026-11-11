@@ -16,6 +16,7 @@ import (
 
 type fakeBackend struct {
 	accepted, rejected []string
+	applied            []string
 	paused             []bool
 	failWith           error
 	journal            []core.Entry
@@ -33,6 +34,14 @@ func (f *fakeBackend) NotSynced(context.Context) ([]NotSyncedSection, error) {
 	return core.NotSyncedStatic(), nil
 }
 func (f *fakeBackend) SettingsPlan(context.Context) ([]PlanItem, error) { return nil, nil }
+func (f *fakeBackend) ApplySettings(_ context.Context, module string) (string, error) {
+	f.applied = append(f.applied, "apply:"+module)
+	return "применено", f.failWith
+}
+func (f *fakeBackend) KeepSettings(_ context.Context, module string) error {
+	f.applied = append(f.applied, "keep:"+module)
+	return f.failWith
+}
 func (f *fakeBackend) GuardAccept(_ context.Context, folder string) error {
 	f.accepted = append(f.accepted, folder)
 	return f.failWith
@@ -180,6 +189,35 @@ func TestDecisionsAndPauseReachBackend(t *testing.T) {
 	}
 	if resp, _ := do(t, ts, "POST", "/api/guard/accept", h, true); resp.StatusCode != 500 {
 		t.Fatalf("без параметра folder ожидалась ошибка, получили %d", resp.StatusCode)
+	}
+}
+
+// Подтверждение на ПК: кнопки «Применить» и «Оставить как здесь» доходят до бэкенда и защищены как все изменяющие запросы.
+func TestSettingsConfirmationEndpoints(t *testing.T) {
+	ts, fb, _ := newServer(t)
+	h := map[string]string{"X-Requested-With": "envsync"}
+	for _, path := range []string{"/api/settings/apply?module=appearance", "/api/settings/keep?module=explorer", "/api/settings/apply"} {
+		if resp, body := do(t, ts, "POST", path, h, true); resp.StatusCode != 200 {
+			t.Fatalf("%s: %d %s", path, resp.StatusCode, body)
+		}
+	}
+	want := []string{"apply:appearance", "keep:explorer", "apply:"}
+	if strings.Join(fb.applied, ",") != strings.Join(want, ",") {
+		t.Fatalf("applied = %v", fb.applied)
+	}
+	// Без служебного заголовка (форма с чужого сайта) и без токена — нельзя.
+	if resp, _ := do(t, ts, "POST", "/api/settings/apply", nil, true); resp.StatusCode != 403 {
+		t.Fatalf("без заголовка: %d", resp.StatusCode)
+	}
+	if resp, _ := do(t, ts, "POST", "/api/settings/apply", h, false); resp.StatusCode != 401 {
+		t.Fatalf("без токена: %d", resp.StatusCode)
+	}
+	// Имя модуля с путём или точками отклоняется.
+	if resp, _ := do(t, ts, "POST", "/api/settings/apply?module=../x", h, true); resp.StatusCode != 500 {
+		t.Fatalf("плохое имя модуля: %d", resp.StatusCode)
+	}
+	if len(fb.applied) != 3 {
+		t.Fatalf("лишние вызовы бэкенда: %v", fb.applied)
 	}
 }
 

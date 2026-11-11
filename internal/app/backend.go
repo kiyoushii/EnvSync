@@ -30,9 +30,115 @@ type Backend struct {
 	Engine  func() (*core.Engine, error) // для просмотра плана настроек; nil = раздел недоступен
 	Audit   *core.Journal                // журнал аудита
 
+	// AutoApply: эта машина сама применяет более свежие настройки других машин (ноутбук).
+	// Без него изменения ждут подтверждения (ПК): их число видно в статусе, интерфейсе и трее.
+	AutoApply bool
+	Log       func(string, ...any)
+
 	mu           sync.Mutex
 	conflictsAt  time.Time
 	conflictsVal []ui.Conflict
+
+	pendingMu sync.Mutex
+	pending   int // сколько модулей ждут подтверждения
+}
+
+func (b *Backend) logf(format string, a ...any) {
+	if b.Log != nil {
+		b.Log(format, a...)
+	}
+}
+
+func (b *Backend) setPending(n int) {
+	b.pendingMu.Lock()
+	b.pending = n
+	b.pendingMu.Unlock()
+}
+
+// Pending — сколько модулей настроек ждут подтверждения на этой машине.
+func (b *Backend) Pending() int {
+	b.pendingMu.Lock()
+	defer b.pendingMu.Unlock()
+	return b.pending
+}
+
+// SettingsTick — один шаг синхронизации настроек: снять своё состояние, затем либо применить более свежее
+// с других машин (AutoApply), либо посчитать, сколько изменений ждёт подтверждения.
+func (b *Backend) SettingsTick(ctx context.Context) error {
+	if b.Engine == nil {
+		return nil
+	}
+	eng, err := b.Engine()
+	if err != nil {
+		return err
+	}
+	if b.AutoApply {
+		run, items, err := eng.Apply(ctx, nil)
+		if run != nil {
+			var mods []string
+			for _, it := range items {
+				mods = append(mods, it.Module)
+			}
+			b.logf("применены настройки с другой машины (%s), запуск %s; откат: envsync rollback %s", strings.Join(mods, ", "), run.ID, run.ID)
+		}
+		b.setPending(0)
+		return err
+	}
+	items, err := eng.Plan(ctx, nil)
+	if err != nil {
+		return err
+	}
+	n := 0
+	for _, it := range items {
+		if it.HasWork() {
+			n++
+		}
+	}
+	b.setPending(n)
+	return nil
+}
+
+// ApplySettings — подтверждение на этой машине: применить изменения с другой машины (модуль или все).
+func (b *Backend) ApplySettings(ctx context.Context, module string) (string, error) {
+	if b.Engine == nil {
+		return "", errors.New("модули настроек недоступны")
+	}
+	eng, err := b.Engine()
+	if err != nil {
+		return "", err
+	}
+	var only []string
+	if module != "" {
+		only = []string{module}
+	}
+	run, _, err := eng.Apply(ctx, only)
+	_ = b.SettingsTick(ctx)
+	if err != nil {
+		return "", err
+	}
+	if run == nil {
+		return "менять нечего", nil
+	}
+	return fmt.Sprintf("применено (запуск %s); откат: envsync rollback %s", run.ID, run.ID), nil
+}
+
+// KeepSettings — отказ: оставить как на этой машине; машины с автоприменением вернутся к этому варианту.
+func (b *Backend) KeepSettings(ctx context.Context, module string) error {
+	if b.Engine == nil {
+		return errors.New("модули настроек недоступны")
+	}
+	eng, err := b.Engine()
+	if err != nil {
+		return err
+	}
+	var only []string
+	if module != "" {
+		only = []string{module}
+	}
+	if err := eng.KeepLocal(ctx, only); err != nil {
+		return err
+	}
+	return b.SettingsTick(ctx)
 }
 
 func (b *Backend) client() (*transport.Client, error) {
@@ -45,7 +151,7 @@ func (b *Backend) client() (*transport.Client, error) {
 
 // Self снимает состояние этой машины вживую.
 func (b *Backend) Self(ctx context.Context) (ui.Status, error) {
-	st := ui.Status{Machine: b.Machine, At: time.Now().UTC(), Version: b.Version, Guard: []ui.GuardTrip{}}
+	st := ui.Status{Machine: b.Machine, At: time.Now().UTC(), Version: b.Version, Guard: []ui.GuardTrip{}, PendingSettings: b.Pending(), AutoApply: b.AutoApply}
 	st.Syncthing.Devices, st.Syncthing.Folders = []ui.DeviceStatus{}, []ui.FolderStatus{}
 	st.Tailscale.Peers = []ui.Peer{}
 
@@ -145,17 +251,7 @@ func (b *Backend) SnapshotLoop(ctx context.Context, settingsEvery, softwareEvery
 			log("снимок %s: %v", name, err)
 		}
 	}
-	settings := func() error {
-		if b.Engine == nil {
-			return nil
-		}
-		eng, err := b.Engine()
-		if err != nil {
-			return err
-		}
-		_, err = eng.Export(ctx)
-		return err
-	}
+	settings := func() error { return b.SettingsTick(ctx) }
 	software := func() error {
 		if softwareScan == nil {
 			return nil

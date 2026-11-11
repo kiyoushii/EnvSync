@@ -210,6 +210,34 @@ func TestPlanFromForcesSourceMachine(t *testing.T) {
 	}
 }
 
+// «Оставить как на ПК»: правка с ноутбука отклоняется, и ноутбук сам возвращается к варианту ПК.
+func TestKeepLocalMakesThisMachineTheLatest(t *testing.T) {
+	state, clk := t.TempDir(), &clock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	ctx := context.Background()
+	pc, laptop := &fakeModule{name: "theme", value: "dark"}, &fakeModule{name: "theme", value: "dark"}
+	PC, Laptop := machine(t, "PC", state, clk, pc), machine(t, "LAPTOP", state, clk, laptop)
+	PC.Export(ctx)
+	Laptop.Export(ctx)
+
+	laptop.value = "light" // правка на ноутбуке
+	Laptop.Export(ctx)
+	if plan, _ := PC.Plan(ctx, nil); len(plan) != 1 {
+		t.Fatalf("ПК должен видеть правку с ноутбука: %+v", plan)
+	}
+	if err := PC.KeepLocal(ctx, []string{"theme"}); err != nil {
+		t.Fatal(err)
+	}
+	if plan, _ := PC.Plan(ctx, nil); len(plan) != 0 {
+		t.Fatalf("после «оставить как на ПК» план ПК должен быть пуст: %+v", plan)
+	}
+	if _, _, err := Laptop.Apply(ctx, nil); err != nil || laptop.value != "dark" {
+		t.Fatalf("ноутбук должен вернуться к варианту ПК: value=%s err=%v", laptop.value, err)
+	}
+	if pc.value != "dark" {
+		t.Fatal("ПК изменился")
+	}
+}
+
 func TestUnchangedExportKeepsChangedAt(t *testing.T) {
 	state, clk := t.TempDir(), &clock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	A := machine(t, "A", state, clk, &fakeModule{name: "m", value: "v"})

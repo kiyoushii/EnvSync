@@ -55,7 +55,8 @@ function machineCard(st, isSelf) {
   const card = el("div", { class: "card" });
   card.append(
     el("h2", {}, el("span", { class: "dot " + (stale ? "warn" : level) }), st.machine, isSelf ? pill("", "эта машина") : pill(stale ? "warn" : "", stale ? "данные устарели: " + ago(st.at) : "снимок " + ago(st.at))),
-    el("div", { class: "muted" }, "Tailscale: ", ts.state, ts.ip ? " (" + ts.ip + ")" : "", " · Syncthing: ", sy.running ? "работает" : "не запущен", st.paused ? " · на паузе" : ""),
+    el("div", { class: "muted" }, "Tailscale: ", ts.state, ts.ip ? " (" + ts.ip + ")" : "", " · Syncthing: ", sy.running ? "работает" : "не запущен", st.paused ? " · на паузе" : "",
+      " · настройки: ", st.autoApply ? "применяет сама" : "с подтверждением", st.pendingSettings ? " (ждут: " + st.pendingSettings + ")" : ""),
   );
   if (sy.devices && sy.devices.length) {
     card.append(el("table", {}, el("tr", {}, ["Устройство", "Связь", "Адрес"].map((h) => el("th", {}, h))),
@@ -116,13 +117,37 @@ async function viewConflicts(root) {
       list.map((c) => el("tr", {}, el("td", { class: "mono" }, c.path, el("div", { class: "muted" }, "оригинал: " + c.original)), el("td", {}, c.folder), el("td", {}, ago(c.modified)), el("td", { class: "num" }, fmtBytes(c.size)))))));
 }
 
+async function settingsAction(kind, module, question) {
+  if (!confirm(question)) return;
+  try {
+    const r = await api("/api/settings/" + kind + (module ? "?module=" + encodeURIComponent(module) : ""), true);
+    alert(r.result);
+  } catch (e) {
+    alert("Не удалось: " + e.message);
+  }
+  render();
+}
+
 async function viewPlan(root) {
+  const s = lastStatus || (await api("/api/status"));
+  if (s.self.autoApply) {
+    root.append(el("div", { class: "banner ok" }, "Эта машина применяет более свежие настройки других машин автоматически (раз в минуту, со снимком для отката). Журнал — на вкладке «Журнал»."));
+  }
   const plan = await api("/api/plan");
-  if (!plan.length) return root.append(el("div", { class: "banner ok" }, "Менять нечего: настройки этой машины не старше настроек другой."));
-  root.append(el("p", { class: "muted" }, "Что изменилось бы на этой машине по настройкам другой. Это только просмотр: применить можно командой «envsync settings apply», перед этим делается снимок для отката."));
+  if (!plan.length) return root.append(el("div", { class: "banner ok" }, "Подтверждать нечего: настройки этой машины не старше настроек другой."));
+  const work = plan.filter((p) => !p.error);
+  root.append(el("div", { class: "banner warn" },
+    el("strong", {}, "Изменения с другой машины ждут вашего решения"),
+    el("div", {}, "«Применить» — сделать здесь так же (перед этим сохраняется снимок, откат: envsync rollback). «Оставить как здесь» — отказаться; другая машина вернётся к варианту этой."),
+    work.length > 1 ? el("div", { class: "actions" },
+      el("button", { class: "btn primary", onclick: () => settingsAction("apply", "", "Применить все изменения с другой машины?") }, "Применить всё"),
+      el("button", { class: "btn", onclick: () => settingsAction("keep", "", "Оставить все настройки как на этой машине?") }, "Оставить всё как здесь")) : null));
   for (const p of plan) {
     root.append(el("div", { class: "card" }, el("h2", {}, p.module, el("span", { class: "muted" }, "от " + p.source)),
-      p.error ? el("div", { class: "err" }, p.error) : el("ul", { class: "clean" }, p.changes.map((c) => el("li", { class: "mono" }, c)))));
+      p.error ? el("div", { class: "err" }, p.error) : el("ul", { class: "clean" }, p.changes.map((c) => el("li", { class: "mono" }, c))),
+      p.error ? null : el("div", { class: "actions" },
+        el("button", { class: "btn primary", onclick: () => settingsAction("apply", p.module, "Применить «" + p.module + "» с " + p.source + "?") }, "Применить"),
+        el("button", { class: "btn", onclick: () => settingsAction("keep", p.module, "Оставить «" + p.module + "» как на этой машине?") }, "Оставить как здесь"))));
   }
 }
 
@@ -161,9 +186,11 @@ async function render() {
 
 function renderTabs() {
   const trips = lastStatus ? (lastStatus.self.guard || []).length : 0;
+  const pending = lastStatus ? lastStatus.self.pendingSettings || 0 : 0;
+  const badge = { decisions: trips, plan: pending };
   document.getElementById("tabs").replaceChildren(...TABS.map(([id, title]) =>
     el("button", { role: "tab", "aria-selected": String(id === current), onclick: () => { current = id; location.hash = id; render(); } },
-      title, id === "decisions" && trips ? el("span", { class: "badge" }, trips) : null)));
+      title, badge[id] ? el("span", { class: "badge" }, badge[id]) : null)));
   const paused = lastStatus && lastStatus.self.paused;
   const b = document.getElementById("pause");
   b.textContent = paused ? "Возобновить синхронизацию" : "Пауза всего";

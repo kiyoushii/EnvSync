@@ -281,6 +281,22 @@ func (e *Engine) apply(ctx context.Context, only []string, from string) (*Run, [
 	return run, items, err
 }
 
+// KeepLocal — решение «оставить как на этой машине» для модулей: их состояние становится самой свежей правкой,
+// и другие машины (с автоприменением) вернутся к нему. Пустой список — все модули.
+func (e *Engine) KeepLocal(ctx context.Context, modules []string) error {
+	if _, err := e.Export(ctx); err != nil {
+		return err
+	}
+	now := e.now()
+	for _, m := range e.selected(modules) {
+		if err := e.State.Touch(e.Machine, m.Name(), now); err != nil {
+			return err
+		}
+		e.log(Entry{Module: m.Name(), Action: "keep", Detail: "оставлено как на этой машине: другие машины подтянутся к нему"})
+	}
+	return nil
+}
+
 // Rollback откатывает запуск (id "" — последний) во всех его модулях.
 func (e *Engine) Rollback(ctx context.Context, id string) (*Run, error) {
 	run, err := e.Snaps.OpenRun(id)

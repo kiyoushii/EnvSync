@@ -25,6 +25,7 @@ const usage = `envsync — синхронизация среды Windows
   run [--no-tray] [--no-ui]     запустить Syncthing, предохранитель, веб-интерфейс и значок в трее (до Ctrl+C или «Выход» в трее)
   ui                            открыть веб-интерфейс запущенного агента в браузере
   install / uninstall           включить или убрать автозапуск агента при входе в систему (задача планировщика, без администратора)
+  stop                          остановить фоновый агент и его Syncthing (install делает это сам при обновлении)
   update                        обновить Syncthing и Tailscale через winget (после подтверждения)
   version                       версии агента, Syncthing, Tailscale и состояние автозапуска
   wait [--timeout 60]           дождаться, пока Syncthing агента ответит (код возврата 0 — готов; для скриптов)
@@ -109,6 +110,8 @@ func dispatch(ctx context.Context, cmd string, args []string) error {
 		return e.cmdInstall(ctx, args)
 	case "uninstall":
 		return e.cmdUninstall(ctx)
+	case "stop":
+		return e.cmdStop(ctx)
 	case "update":
 		return e.cmdUpdate(ctx)
 	case "version":

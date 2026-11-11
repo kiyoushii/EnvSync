@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 
@@ -55,8 +56,14 @@ func (e *env) cmdInstall(ctx context.Context, args []string) error {
 		return nil
 	}
 	if needCopy {
+		// Запущенный .exe Windows заменить не даёт: сначала останавливаем прежнюю версию агента.
+		if n, err := e.stopAgents(ctx); err != nil {
+			return err
+		} else if n > 0 {
+			fmt.Printf("Остановлена прежняя версия агента (%d).\n", n)
+		}
 		if err := core.CopyFileAtomic(self, target); err != nil {
-			return fmt.Errorf("не удалось скопировать программу (возможно, агент уже запущен из этой папки: закройте его через значок в трее): %w", err)
+			return fmt.Errorf("не удалось скопировать программу: %w", err)
 		}
 	}
 	if err := (install.Task{Name: install.DefaultTaskName, Exe: target, Args: "run --background", User: user}).Create(ctx); err != nil {
@@ -70,6 +77,58 @@ func (e *env) cmdInstall(ctx context.Context, args []string) error {
 		}
 		fmt.Println("Агент запущен в фоне (значок в трее, интерфейс: envsync ui).")
 	}
+	return nil
+}
+
+// stopAgents останавливает другие запущенные экземпляры envsync.exe (фоновый агент), затем корректно
+// завершает Syncthing через REST. Сначала агент, иначе он перезапустил бы Syncthing. Возвращает число остановленных.
+func (e *env) stopAgents(ctx context.Context) (int, error) {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseHandle(snap)
+	var pe windows.ProcessEntry32
+	pe.Size = uint32(unsafe.Sizeof(pe))
+	self := uint32(os.Getpid())
+	stopped := 0
+	for err := windows.Process32First(snap, &pe); err == nil; err = windows.Process32Next(snap, &pe) {
+		if pe.ProcessID == self || !strings.EqualFold(windows.UTF16ToString(pe.ExeFile[:]), "envsync.exe") {
+			continue
+		}
+		h, err := windows.OpenProcess(windows.PROCESS_TERMINATE|windows.SYNCHRONIZE, false, pe.ProcessID)
+		if err != nil {
+			continue // чужой процесс без прав — не наш
+		}
+		if windows.TerminateProcess(h, 0) == nil {
+			_, _ = windows.WaitForSingleObject(h, 5000)
+			stopped++
+		}
+		windows.CloseHandle(h)
+	}
+	if key, err := transport.ReadAPIKey(e.s.ConfigXMLPath()); err == nil {
+		c := transport.NewClient(e.s.GUIPort, key)
+		sctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		if c.Shutdown(sctx) == nil {
+			for i := 0; i < 20; i++ { // ждём, пока Syncthing закроет базу и выйдет
+				time.Sleep(500 * time.Millisecond)
+				if _, err := c.MyID(sctx); err != nil {
+					break
+				}
+			}
+		}
+		cancel()
+	}
+	return stopped, nil
+}
+
+// cmdStop — остановить фоновый агента и его Syncthing.
+func (e *env) cmdStop(ctx context.Context) error {
+	n, err := e.stopAgents(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Остановлено экземпляров агента: %d. Syncthing завершён. Запуск: envsync run (или вход в систему при включённом автозапуске).\n", n)
 	return nil
 }
 

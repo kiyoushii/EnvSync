@@ -99,6 +99,24 @@ func (d StateDir) Write(machine, module string, data json.RawMessage, now time.T
 	return true, writeFileAtomic(d.file(machine, module), out)
 }
 
+// Touch делает текущее состояние модуля машины самым свежим (ChangedAt = now), не меняя данных.
+// Это решение «оставить как здесь»: другие машины увидят его как последнюю правку и подтянутся к нему.
+func (d StateDir) Touch(machine, module string, now time.Time) error {
+	sf, err := d.Read(machine, module)
+	if err != nil {
+		return err
+	}
+	if sf == nil {
+		return fmt.Errorf("состояния модуля %s на машине %s нет", module, machine)
+	}
+	sf.ChangedAt = now.UTC()
+	out, err := json.MarshalIndent(sf, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(d.file(machine, module), out)
+}
+
 // Machines возвращает имена машин, у которых есть состояние.
 func (d StateDir) Machines() ([]string, error) {
 	entries, err := os.ReadDir(d.Root)

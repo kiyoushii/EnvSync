@@ -68,6 +68,7 @@ func (e *env) cmdRun(ctx context.Context, args []string) error {
 		be = &app.Backend{
 			S: e.s, TS: e.ts, Machine: cenv.Machine, Version: version, Guard: guard,
 			Engine: e.engine, Audit: a.Journal,
+			AutoApply: e.s.AutoApplySettings, Log: e.logger.Printf,
 		}
 		token, err := ui.NewToken()
 		if err != nil {
@@ -87,8 +88,9 @@ func (e *env) cmdRun(ctx context.Context, args []string) error {
 			}
 		}()
 		go be.StatusLoop(runCtx, 15*time.Second)
-		// Настройки снимаются каждые 5 минут, список программ раз в час (winget export небыстрый).
-		go be.SnapshotLoop(runCtx, 5*time.Minute, time.Hour, func(ctx context.Context) error {
+		// Настройки: раз в минуту снимок и либо автоприменение, либо подсчёт ждущих подтверждения.
+		// Список программ раз в час (winget export небыстрый).
+		go be.SnapshotLoop(runCtx, time.Minute, time.Hour, func(ctx context.Context) error {
 			mgr, _, err := e.softwareManager()
 			if err != nil {
 				return err

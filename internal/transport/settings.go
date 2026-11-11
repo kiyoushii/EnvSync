@@ -22,8 +22,11 @@ type Settings struct {
 	TestFolderPath string `json:"testFolderPath"` // где лежит тестовая папка на этой машине
 
 	WallpaperStyle string `json:"wallpaperStyle"` // режим подгонки обоев на этой машине (WallpaperStyle); пусто = как у источника
-	ManifestPath   string `json:"manifestPath"`   // пусто = envsync.yaml в папке агента
-	AllowLiveData  bool   `json:"allowLiveData"`  // false (по умолчанию): синкаются только папки с test: true
+	// AutoApplySettings: эта машина сама применяет более свежие настройки других машин (со снимком и откатом).
+	// false (по умолчанию): изменения ждут подтверждения в интерфейсе или командой envsync settings apply.
+	AutoApplySettings bool   `json:"autoApplySettings"`
+	ManifestPath      string `json:"manifestPath"`  // пусто = envsync.yaml в папке агента
+	AllowLiveData     bool   `json:"allowLiveData"` // false (по умолчанию): синкаются только папки с test: true
 
 	Ignores       []string `json:"ignores"`       // исключения тестовой папки; пусто = core.DefaultIgnores
 	WatcherDelayS int      `json:"watcherDelayS"` // задержка отклика на изменения файлов, секунды
@@ -102,6 +105,18 @@ func (s Settings) ManifestFile() string {
 		return s.ManifestPath
 	}
 	return filepath.Join(s.baseDir, "envsync.yaml")
+}
+
+// Save записывает настройки в settings.json (атомарно).
+func (s Settings) Save() error {
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(s.baseDir, 0o700); err != nil {
+		return err
+	}
+	return writeFileAtomic(filepath.Join(s.baseDir, "settings.json"), append(data, '\n'))
 }
 
 // BaseDir — папка агента.

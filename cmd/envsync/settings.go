@@ -21,6 +21,8 @@ const settingsUsage = `envsync settings — синхронизация наст�
   с эталоном, например на новой машине: envsync settings apply --from DESKTOP-LS890QQ). Без --from
   применяется только то, что на другой машине поменяли позже, чем здесь.
   rollback [id]           откатить последнее применение (или указанное)
+  auto on|off|status      автоприменение: машина сама подтягивает более свежие настройки других машин
+                          (для ноутбука). Выключено (по умолчанию) — изменения ждут подтверждения (для ПК)
   runs                    список применений, которые можно откатить
   journal [-n 30]         журнал аудита: что, когда и откуда менялось
 
@@ -103,6 +105,25 @@ func (e *env) cmdSettings(ctx context.Context, args []string) error {
 				status = "не завершён"
 			}
 			fmt.Printf("%s  %-11s %s (источник %s)\n", r.ID, status, strings.Join(r.Modules, ", "), r.Source)
+		}
+		return nil
+	case "auto":
+		if len(rest) != 1 || (rest[0] != "on" && rest[0] != "off" && rest[0] != "status") {
+			return errors.New("использование: envsync settings auto on|off|status")
+		}
+		if rest[0] != "status" {
+			e.s.AutoApplySettings = rest[0] == "on"
+			if err := e.s.Save(); err != nil {
+				return err
+			}
+		}
+		if e.s.AutoApplySettings {
+			fmt.Println("Автоприменение ВКЛЮЧЕНО: эта машина сама применяет более свежие настройки других машин (со снимком и откатом).")
+		} else {
+			fmt.Println("Автоприменение выключено: изменения с других машин ждут подтверждения (интерфейс, вкладка «Настройки», или envsync settings apply).")
+		}
+		if rest[0] != "status" {
+			fmt.Println("Работающий агент подхватит это после перезапуска (выход через значок в трее и запуск, или следующий вход в систему).")
 		}
 		return nil
 	case "journal":
