@@ -82,6 +82,12 @@ func (s Settings) SnapshotsDir() string { return filepath.Join(s.baseDir, "snaps
 // JournalFile — журнал аудита этой машины.
 func (s Settings) JournalFile() string { return filepath.Join(s.baseDir, "journal.jsonl") }
 
+// GuardFile — запись предохранителя массового удаления (сработавшие папки, ждущие решения).
+func (s Settings) GuardFile() string { return filepath.Join(s.baseDir, "guard.json") }
+
+// LiveDataAckFile — отметка, что владелец подтвердил резервную копию перед синком реальных данных.
+func (s Settings) LiveDataAckFile() string { return filepath.Join(s.baseDir, "live-data-ack.json") }
+
 // StateFolderID — идентификатор служебной папки состояний в Syncthing.
 const StateFolderID = "envsync-state"
 

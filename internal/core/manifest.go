@@ -29,7 +29,50 @@ type Manifest struct {
 	Ignore   []string           `yaml:"ignore"`   // общие исключения; если не задано, берутся DefaultIgnores
 	Folders  []FolderDef        `yaml:"folders"`  // синкаемые папки
 	Software *SoftwareDef       `yaml:"software"` // программы (схема 2)
+	Safety   *SafetyDef         `yaml:"safety"`   // пороги предохранителей (схема 2)
 	Machines map[string]Machine `yaml:"machines"` // профили машин по имени компьютера
+}
+
+// SafetyDef — настройки защиты данных.
+type SafetyDef struct {
+	MassDelete MassDeleteDef `yaml:"mass_delete"`
+}
+
+// MassDeleteDef — порог предохранителя массового удаления. Папка ставится на паузу, если пришедших
+// удалений не меньше MinFiles и их больше MaxFiles либо больше MaxPercent процентов файлов папки.
+type MassDeleteDef struct {
+	MaxFiles   int     `yaml:"max_files"`   // 0 = 1000
+	MaxPercent float64 `yaml:"max_percent"` // 0 = 5
+	MinFiles   int     `yaml:"min_files"`   // 0 = 10: меньше этого не считается массовым даже при большой доле (папка из 8 файлов)
+}
+
+// MassDelete возвращает порог с подставленными значениями по умолчанию.
+func (m *Manifest) MassDelete() MassDeleteDef {
+	d := MassDeleteDef{}
+	if m != nil && m.Safety != nil {
+		d = m.Safety.MassDelete
+	}
+	if d.MaxFiles == 0 {
+		d.MaxFiles = 1000
+	}
+	if d.MaxPercent == 0 {
+		d.MaxPercent = 5
+	}
+	if d.MinFiles == 0 {
+		d.MinFiles = 10
+	}
+	return d
+}
+
+// Exceeded сообщает, является ли число ожидающих удалений массовым для папки с globalFiles файлами.
+func (d MassDeleteDef) Exceeded(needDeletes, globalFiles int64) bool {
+	if needDeletes < int64(d.MinFiles) {
+		return false
+	}
+	if needDeletes > int64(d.MaxFiles) {
+		return true
+	}
+	return globalFiles > 0 && float64(needDeletes)*100 > d.MaxPercent*float64(globalFiles)
 }
 
 // SoftwareDef — желаемый набор программ.
@@ -205,6 +248,15 @@ func (m *Manifest) validate() error {
 			add("раздел software требует schema: 2")
 		}
 		errs = append(errs, m.Software.validate()...)
+	}
+	if m.Safety != nil {
+		md := m.Safety.MassDelete
+		if m.Schema < 2 {
+			add("раздел safety требует schema: 2")
+		}
+		if md.MaxFiles < 0 || md.MinFiles < 0 || md.MaxPercent < 0 || md.MaxPercent > 100 {
+			add("safety.mass_delete: значения не могут быть отрицательными, max_percent не больше 100")
+		}
 	}
 
 	lower := map[string]string{}

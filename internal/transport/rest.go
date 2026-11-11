@@ -111,6 +111,8 @@ type FolderStatus struct {
 	State       string `json:"state"`       // idle, scanning, syncing...
 	NeedBytes   int64  `json:"needBytes"`   // сколько ещё нужно получить
 	NeedFiles   int64  `json:"needFiles"`   // сколько файлов ещё нужно получить
+	NeedDeletes int64  `json:"needDeletes"` // сколько удалений от других машин ещё не применено здесь
+	LocalFiles  int64  `json:"localFiles"`  // файлов в этой папке на этой машине
 	GlobalFiles int64  `json:"globalFiles"` // файлов в общем состоянии
 	PullErrors  int64  `json:"pullErrors"`  // файлов, которые не удалось получить
 }
@@ -130,6 +132,49 @@ func (c *Client) Rescan(ctx context.Context, folderID string) error {
 // PatchOptions меняет отдельные общие настройки Syncthing (например, ограничение скорости).
 func (c *Client) PatchOptions(ctx context.Context, opts map[string]any) error {
 	return c.do(ctx, http.MethodPatch, "/rest/config/options", opts, nil)
+}
+
+// FolderIDs возвращает идентификаторы всех папок в конфиге Syncthing.
+func (c *Client) FolderIDs(ctx context.Context) ([]string, error) {
+	var folders []struct {
+		ID string `json:"id"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/rest/config/folders", nil, &folders); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(folders))
+	for _, f := range folders {
+		ids = append(ids, f.ID)
+	}
+	return ids, nil
+}
+
+// PauseAll и ResumeAll ставят на паузу и возобновляют связь со ВСЕМИ устройствами («пауза всего»).
+func (c *Client) PauseAll(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/rest/system/pause", nil, nil)
+}
+
+func (c *Client) ResumeAll(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/rest/system/resume", nil, nil)
+}
+
+// PauseFolder и ResumeFolder ставят папку на паузу и снимают с неё (меняется только поле paused).
+func (c *Client) PauseFolder(ctx context.Context, id string) error {
+	return c.setFolderPaused(ctx, id, true)
+}
+func (c *Client) ResumeFolder(ctx context.Context, id string) error {
+	return c.setFolderPaused(ctx, id, false)
+}
+
+func (c *Client) setFolderPaused(ctx context.Context, id string, paused bool) error {
+	return c.do(ctx, http.MethodPatch, "/rest/config/folders/"+url.PathEscape(id), map[string]any{"paused": paused}, nil)
+}
+
+// Raw выполняет произвольный GET и возвращает ответ как есть (для разведки и диагностики).
+func (c *Client) Raw(ctx context.Context, path string) (string, error) {
+	var out json.RawMessage
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return string(out), err
 }
 
 // PauseDevice временно отключает синхронизацию с устройством (связь рвётся), ResumeDevice включает.

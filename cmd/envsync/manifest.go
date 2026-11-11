@@ -88,6 +88,7 @@ func (e *env) cmdApply(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
 	yes := fs.Bool("yes", false, "не спрашивать подтверждение")
 	file := fs.String("file", "", "путь к манифесту")
+	backup := fs.Bool("backup-confirmed", false, "подтверждаю, что сделал резервную копию и точку восстановления (нужно один раз перед синком реальных данных)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -107,7 +108,20 @@ func (e *env) cmdApply(ctx context.Context, args []string) error {
 		}
 		if len(live) > 0 {
 			return fmt.Errorf("синк реальных данных выключен (allowLiveData=false), а в манифесте есть не тестовые папки: %s. "+
-				"До этапа 6 (откат и предохранитель удаления) разрешены только папки с test: true", strings.Join(live, ", "))
+				"Это решение владельца: включите \"allowLiveData\": true в settings.json, когда будете готовы "+
+				"(предохранитель массового удаления и откат уже работают, см. envsync guard status)", strings.Join(live, ", "))
+		}
+	} else {
+		var live []string
+		for _, f := range folders {
+			if !f.Test {
+				live = append(live, f.ID)
+			}
+		}
+		if len(live) > 0 {
+			if err := e.ackLiveData(live, *backup); err != nil {
+				return err
+			}
 		}
 	}
 

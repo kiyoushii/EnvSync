@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/kiyoushii/EnvSync/internal/core"
 )
 
 // Agent запускает Syncthing как дочерний процесс и следит, чтобы он работал
@@ -18,6 +20,11 @@ type Agent struct {
 	S   Settings
 	TS  *Tailscale
 	Log *log.Logger
+
+	// Предохранитель массового удаления работает, пока работает Syncthing.
+	MassDelete core.MassDeleteDef // порог из манифеста; нули = значения по умолчанию
+	Journal    *core.Journal
+	Machine    string
 
 	// Интервалы вынесены в поля, чтобы их можно было сократить в тестах.
 	TailnetPollEvery time.Duration // как часто проверять Tailscale во время работы
@@ -164,6 +171,22 @@ func (a *Agent) runOnce(ctx context.Context, bin string, ip netip.Addr) error {
 
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
+
+	// Предохранитель массового удаления: следит за папками, пока этот Syncthing жив.
+	guardCtx, stopGuard := context.WithCancel(ctx)
+	defer stopGuard()
+	go func() {
+		if err := client.WaitReady(guardCtx, 60*time.Second); err != nil {
+			return
+		}
+		cfg := a.MassDelete
+		if cfg == (core.MassDeleteDef{}) {
+			cfg = (&core.Manifest{}).MassDelete()
+		}
+		g := &Guard{C: client, Cfg: cfg, StatePath: a.S.GuardFile(), Journal: a.Journal, Machine: a.Machine, Log: a.Log}
+		a.Log.Printf("предохранитель массового удаления включён: больше %d файлов или %.4g%% папки (не меньше %d файлов)", cfg.MaxFiles, cfg.MaxPercent, cfg.MinFiles)
+		g.Run(guardCtx)
+	}()
 
 	tick := time.NewTicker(a.pollEvery())
 	defer tick.Stop()

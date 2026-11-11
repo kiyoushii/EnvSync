@@ -1,4 +1,4 @@
-// Команда envsync — агент синхронизации среды Windows (этап 1: сеть и сопряжение).
+// Команда envsync — агент синхронизации среды Windows: сеть, файлы, настройки, программы, защита данных.
 package main
 
 import (
@@ -13,10 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kiyoushii/EnvSync/internal/core"
 	"github.com/kiyoushii/EnvSync/internal/transport"
 )
 
-const usage = `envsync — синхронизация среды Windows (этап 1)
+const usage = `envsync — синхронизация среды Windows
 
 Команды:
   init                          создать ключи и конфиг Syncthing, показать Device ID
@@ -31,6 +32,9 @@ const usage = `envsync — синхронизация среды Windows (эта
   settings <действие>           настройки Windows, оформление, конфиги приложений: export, plan, apply, rollback, runs, journal
                                 (подробнее: envsync settings)
   software <действие>           программы через winget: scan, plan, apply, rollback (подробнее: envsync software)
+  guard <действие>              предохранитель массового удаления: status, accept, reject (подробнее: envsync guard)
+  pause / resume                «пауза всего»: приостановить или возобновить синхронизацию со всеми устройствами
+  rollback [id]                 откатить последнее применение (настроек или программ); id смотрите в settings runs
 `
 
 func main() {
@@ -90,7 +94,7 @@ func dispatch(ctx context.Context, cmd string, args []string) error {
 	case "id":
 		return e.cmdID(ctx)
 	case "run":
-		a := &transport.Agent{S: e.s, TS: e.ts, Log: e.logger}
+		a := e.agent()
 		fmt.Println("Агент запущен. Остановить: Ctrl+C.")
 		return a.Run(ctx)
 	case "status":
@@ -105,6 +109,14 @@ func dispatch(ctx context.Context, cmd string, args []string) error {
 		return e.cmdSettings(ctx, args)
 	case "software":
 		return e.cmdSoftware(ctx, args)
+	case "guard":
+		return e.cmdGuard(ctx, args)
+	case "pause":
+		return e.cmdPause(ctx, false)
+	case "resume":
+		return e.cmdPause(ctx, true)
+	case "rollback":
+		return e.cmdRollback(ctx, args)
 	default:
 		fmt.Print(usage)
 		return fmt.Errorf("неизвестная команда %q", cmd)
@@ -112,7 +124,16 @@ func dispatch(ctx context.Context, cmd string, args []string) error {
 }
 
 func (e *env) agent() *transport.Agent {
-	return &transport.Agent{S: e.s, TS: e.ts, Log: e.logger}
+	machine := ""
+	if cenv, err := core.CurrentEnv(); err == nil {
+		machine = cenv.Machine
+	}
+	return &transport.Agent{
+		S: e.s, TS: e.ts, Log: e.logger,
+		MassDelete: e.massDeleteFromManifest(),
+		Journal:    &core.Journal{Path: e.s.JournalFile()},
+		Machine:    machine,
+	}
 }
 
 func (e *env) cmdInit(ctx context.Context) error {
