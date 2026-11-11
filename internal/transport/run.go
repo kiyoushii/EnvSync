@@ -25,6 +25,9 @@ type Agent struct {
 	MassDelete core.MassDeleteDef // порог из манифеста; нули = значения по умолчанию
 	Journal    *core.Journal
 	Machine    string
+	// Guard — общий экземпляр предохранителя (его же использует интерфейс, чтобы запись состояния не гонялась).
+	// nil = агент создаст свой.
+	Guard *Guard
 
 	// Интервалы вынесены в поля, чтобы их можно было сократить в тестах.
 	TailnetPollEvery time.Duration // как часто проверять Tailscale во время работы
@@ -179,12 +182,15 @@ func (a *Agent) runOnce(ctx context.Context, bin string, ip netip.Addr) error {
 		if err := client.WaitReady(guardCtx, 60*time.Second); err != nil {
 			return
 		}
-		cfg := a.MassDelete
-		if cfg == (core.MassDeleteDef{}) {
-			cfg = (&core.Manifest{}).MassDelete()
+		g := a.Guard
+		if g == nil {
+			cfg := a.MassDelete
+			if cfg == (core.MassDeleteDef{}) {
+				cfg = (&core.Manifest{}).MassDelete()
+			}
+			g = &Guard{C: client, Cfg: cfg, StatePath: a.S.GuardFile(), Journal: a.Journal, Machine: a.Machine, Log: a.Log}
 		}
-		g := &Guard{C: client, Cfg: cfg, StatePath: a.S.GuardFile(), Journal: a.Journal, Machine: a.Machine, Log: a.Log}
-		a.Log.Printf("предохранитель массового удаления включён: больше %d файлов или %.4g%% папки (не меньше %d файлов)", cfg.MaxFiles, cfg.MaxPercent, cfg.MinFiles)
+		a.Log.Printf("предохранитель массового удаления включён: больше %d файлов или %.4g%% папки (не меньше %d файлов)", g.Cfg.MaxFiles, g.Cfg.MaxPercent, g.Cfg.MinFiles)
 		g.Run(guardCtx)
 	}()
 

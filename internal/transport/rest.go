@@ -134,6 +134,43 @@ func (c *Client) PatchOptions(ctx context.Context, opts map[string]any) error {
 	return c.do(ctx, http.MethodPatch, "/rest/config/options", opts, nil)
 }
 
+// DeviceInfo — устройство из конфига Syncthing.
+type DeviceInfo struct {
+	ID        string   `json:"deviceID"`
+	Name      string   `json:"name"`
+	Addresses []string `json:"addresses"`
+	Paused    bool     `json:"paused"`
+}
+
+// DeviceList возвращает все устройства из конфига, кроме себя.
+func (c *Client) DeviceList(ctx context.Context, selfID string) ([]DeviceInfo, error) {
+	var all []DeviceInfo
+	if err := c.do(ctx, http.MethodGet, "/rest/config/devices", nil, &all); err != nil {
+		return nil, err
+	}
+	var out []DeviceInfo
+	for _, d := range all {
+		if d.ID != selfID {
+			out = append(out, d)
+		}
+	}
+	return out, nil
+}
+
+// FolderInfo — папка из конфига Syncthing.
+type FolderInfo struct {
+	ID     string `json:"id"`
+	Path   string `json:"path"`
+	Paused bool   `json:"paused"`
+}
+
+// FolderList возвращает все папки из конфига.
+func (c *Client) FolderList(ctx context.Context) ([]FolderInfo, error) {
+	var out []FolderInfo
+	err := c.do(ctx, http.MethodGet, "/rest/config/folders", nil, &out)
+	return out, err
+}
+
 // FolderIDs возвращает идентификаторы всех папок в конфиге Syncthing.
 func (c *Client) FolderIDs(ctx context.Context) ([]string, error) {
 	var folders []struct {

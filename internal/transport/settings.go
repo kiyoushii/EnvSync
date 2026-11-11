@@ -17,6 +17,7 @@ type Settings struct {
 	TailscalePath  string `json:"tailscalePath"`  // пусто = искать в PATH и в Program Files
 	GUIPort        int    `json:"guiPort"`        // порт REST/GUI Syncthing, слушает только 127.0.0.1
 	SyncPort       int    `json:"syncPort"`       // порт синхронизации, слушает только IP Tailscale
+	UIPort         int    `json:"uiPort"`         // порт локального веб-интерфейса, слушает только 127.0.0.1
 	TestFolderID   string `json:"testFolderId"`   // идентификатор тестовой папки в Syncthing
 	TestFolderPath string `json:"testFolderPath"` // где лежит тестовая папка на этой машине
 
@@ -53,6 +54,7 @@ func LoadSettings(baseDir string) (Settings, error) {
 	s := Settings{
 		GUIPort:        18384, // не 8384, чтобы не конфликтовать с ручной установкой Syncthing
 		SyncPort:       22000,
+		UIPort:         18385,
 		TestFolderID:   "envsync-test",
 		TestFolderPath: filepath.Join(home, "EnvSyncTest"),
 		WatcherDelayS:  3, // у Syncthing по умолчанию 10 с; 3 с ближе к «почти реальному времени»
@@ -81,6 +83,9 @@ func (s Settings) SnapshotsDir() string { return filepath.Join(s.baseDir, "snaps
 
 // JournalFile — журнал аудита этой машины.
 func (s Settings) JournalFile() string { return filepath.Join(s.baseDir, "journal.jsonl") }
+
+// UITokenFile — токен доступа к локальному веб-интерфейсу (создаётся при каждом запуске агента).
+func (s Settings) UITokenFile() string { return filepath.Join(s.baseDir, "ui-token") }
 
 // GuardFile — запись предохранителя массового удаления (сработавшие папки, ждущие решения).
 func (s Settings) GuardFile() string { return filepath.Join(s.baseDir, "guard.json") }

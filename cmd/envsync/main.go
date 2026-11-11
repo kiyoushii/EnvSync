@@ -22,7 +22,9 @@ const usage = `envsync — синхронизация среды Windows
 Команды:
   init                          создать ключи и конфиг Syncthing, показать Device ID
   id                            показать Device ID и имя этой машины в Tailscale
-  run                           запустить Syncthing и следить за Tailscale (работает, пока не нажмёте Ctrl+C)
+  run [--no-tray] [--no-ui]     запустить Syncthing, предохранитель, веб-интерфейс и значок в трее (до Ctrl+C или «Выход» в трее)
+  ui                            открыть веб-интерфейс запущенного агента в браузере
+  checklist                     чек-лист ручной настройки новой машины (то, что EnvSync не переносит)
   status                        состояние Tailscale, Syncthing и связи со вторым устройством
   audit                         проверить, что конфиг Syncthing слушает только Tailscale
   pair <имя-в-tailscale> <id>   добавить вторую машину (dry-run и подтверждение)
@@ -94,9 +96,11 @@ func dispatch(ctx context.Context, cmd string, args []string) error {
 	case "id":
 		return e.cmdID(ctx)
 	case "run":
-		a := e.agent()
-		fmt.Println("Агент запущен. Остановить: Ctrl+C.")
-		return a.Run(ctx)
+		return e.cmdRun(ctx, args)
+	case "ui":
+		return e.cmdUI()
+	case "checklist":
+		return e.cmdChecklist()
 	case "status":
 		return e.cmdStatus(ctx)
 	case "audit":
