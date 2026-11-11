@@ -32,6 +32,9 @@ type PairPlan struct {
 	FolderID   string
 	FolderPath string
 
+	// StatePath — служебная папка состояний (этап 4); пусто = не настраивать.
+	StatePath string
+
 	// Параметры папки (этап 2). Нулевые значения означают «оставить как есть».
 	Ignores       []string // шаблоны исключений (.stignore)
 	WatcherDelayS int      // задержка отклика на изменения файлов
@@ -65,6 +68,7 @@ func BuildPairPlan(s Settings, ts *TSStatus, peerName, peerID, selfID string) (*
 		FolderID:   s.TestFolderID,
 		FolderPath: s.TestFolderPath,
 
+		StatePath:     s.StateDir(),
 		Ignores:       s.IgnoresOrDefault(),
 		WatcherDelayS: s.WatcherDelayS,
 		MaxConflicts:  s.MaxConflicts,
@@ -84,6 +88,10 @@ func (p *PairPlan) Describe() string {
 	}
 	if n := core.CountPatterns(p.Ignores); n > 0 {
 		fmt.Fprintf(&b, "  3. Задать исключения папки (%d шаблонов): .git, node_modules, кэши, незавершённые загрузки и т. п.\n", n)
+	}
+	if p.StatePath != "" {
+		fmt.Fprintf(&b, "  4. Создать (если нет) служебную папку состояний %q: %s\n", StateFolderID, p.StatePath)
+		fmt.Fprintf(&b, "     через неё машины обмениваются настройками и обоями; секреты в неё не попадают\n")
 	}
 	fmt.Fprintf(&b, "Ничего другого не затрагивается.\n")
 	return b.String()
@@ -107,12 +115,25 @@ func ApplyPair(ctx context.Context, c *Client, selfID string, p *PairPlan) error
 	}
 
 	// --- тестовая папка ---
-	return ApplyFolder(ctx, c, selfID, []string{p.PeerID}, FolderSpec{
+	if err := ApplyFolder(ctx, c, selfID, []string{p.PeerID}, FolderSpec{
 		ID:            p.FolderID,
 		Path:          p.FolderPath,
 		Ignores:       p.Ignores,
 		KeepDays:      30,
 		WatcherDelayS: p.WatcherDelayS,
 		MaxConflicts:  p.MaxConflicts,
-	})
+	}); err != nil {
+		return err
+	}
+	// --- служебная папка состояний ---
+	if p.StatePath != "" {
+		return ApplyFolder(ctx, c, selfID, []string{p.PeerID}, StateFolderSpec(p.StatePath, p.WatcherDelayS, p.MaxConflicts))
+	}
+	return nil
+}
+
+// StateFolderSpec — папка состояний: без исключений (там только наши служебные файлы),
+// каждая машина пишет только в свою подпапку, поэтому конфликтов не бывает.
+func StateFolderSpec(path string, watcherDelayS, maxConflicts int) FolderSpec {
+	return FolderSpec{ID: StateFolderID, Path: path, KeepDays: 30, WatcherDelayS: watcherDelayS, MaxConflicts: maxConflicts}
 }

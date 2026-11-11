@@ -141,5 +141,10 @@ func (e *env) cmdApply(ctx context.Context, args []string) error {
 		}
 		fmt.Printf("  %s: готово\n", f.ID)
 	}
+	// Служебная папка состояний нужна для обмена настройками; обеспечиваем её тем же вызовом.
+	if err := transport.ApplyFolder(ctx, c, selfID, peers, transport.StateFolderSpec(e.s.StateDir(), e.s.WatcherDelayS, e.s.MaxConflicts)); err != nil {
+		return err
+	}
+	fmt.Printf("  %s: готово\n", transport.StateFolderID)
 	return nil
 }

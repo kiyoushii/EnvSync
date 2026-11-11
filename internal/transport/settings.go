@@ -20,8 +20,9 @@ type Settings struct {
 	TestFolderID   string `json:"testFolderId"`   // идентификатор тестовой папки в Syncthing
 	TestFolderPath string `json:"testFolderPath"` // где лежит тестовая папка на этой машине
 
-	ManifestPath  string `json:"manifestPath"`  // пусто = envsync.yaml в папке агента
-	AllowLiveData bool   `json:"allowLiveData"` // false (по умолчанию): синкаются только папки с test: true
+	WallpaperStyle string `json:"wallpaperStyle"` // режим подгонки обоев на этой машине (WallpaperStyle); пусто = как у источника
+	ManifestPath   string `json:"manifestPath"`   // пусто = envsync.yaml в папке агента
+	AllowLiveData  bool   `json:"allowLiveData"`  // false (по умолчанию): синкаются только папки с test: true
 
 	Ignores       []string `json:"ignores"`       // исключения тестовой папки; пусто = core.DefaultIgnores
 	WatcherDelayS int      `json:"watcherDelayS"` // задержка отклика на изменения файлов, секунды
@@ -71,6 +72,18 @@ func LoadSettings(baseDir string) (Settings, error) {
 	s.baseDir = baseDir
 	return s, nil
 }
+
+// StateDir — папка состояний машин: её синкает Syncthing, через неё машины обмениваются настройками.
+func (s Settings) StateDir() string { return filepath.Join(s.baseDir, "state") }
+
+// SnapshotsDir — снимки «до» для отката настроек; остаются только на этой машине.
+func (s Settings) SnapshotsDir() string { return filepath.Join(s.baseDir, "snapshots") }
+
+// JournalFile — журнал аудита этой машины.
+func (s Settings) JournalFile() string { return filepath.Join(s.baseDir, "journal.jsonl") }
+
+// StateFolderID — идентификатор служебной папки состояний в Syncthing.
+const StateFolderID = "envsync-state"
 
 // ManifestFile — путь к манифесту: из settings.json или envsync.yaml в папке агента.
 func (s Settings) ManifestFile() string {

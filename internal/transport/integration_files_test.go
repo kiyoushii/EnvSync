@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -382,6 +383,150 @@ machines:
 	time.Sleep(8 * time.Second)
 	if _, err := os.Stat(filepath.Join(rootB, "Docs", "секрет.txt")); err == nil {
 		t.Error("папка docs, пропущенная в профиле B, оказалась на B")
+	}
+}
+
+// themeModule — минимальный модуль для сквозного теста: значение в «настройках» машины
+// и файл-приложение (как обои), которые должны доехать вместе с состоянием.
+type themeModule struct {
+	value, payload string
+}
+
+func (m *themeModule) Name() string { return "theme" }
+
+func (m *themeModule) Export(_ context.Context, assets string) (json.RawMessage, error) {
+	if err := os.MkdirAll(assets, 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(assets, "payload.txt"), []byte(m.payload), 0o600); err != nil {
+		return nil, err
+	}
+	return json.Marshal(map[string]string{"value": m.value, "payload": m.payload})
+}
+
+func (m *themeModule) want(desired json.RawMessage, assets string) (value, payload string, err error) {
+	var st map[string]string
+	if err = json.Unmarshal(desired, &st); err != nil {
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(assets, "payload.txt"))
+	if err != nil {
+		return "", "", fmt.Errorf("файл-приложение ещё не доехал: %w", err)
+	}
+	if string(data) != st["payload"] {
+		return "", "", fmt.Errorf("файл-приложение докачивается")
+	}
+	return st["value"], string(data), nil
+}
+
+func (m *themeModule) Plan(_ context.Context, desired json.RawMessage, assets string) ([]core.Change, error) {
+	v, p, err := m.want(desired, assets)
+	if err != nil {
+		return nil, err
+	}
+	if v == m.value && p == m.payload {
+		return nil, nil
+	}
+	return []core.Change{{Target: "theme", Before: m.value, After: v}}, nil
+}
+
+func (m *themeModule) Apply(_ context.Context, desired json.RawMessage, assets string, snap *core.Snapshot) error {
+	v, p, err := m.want(desired, assets)
+	if err != nil {
+		return err
+	}
+	if err := snap.PutJSON("before.json", map[string]string{"value": m.value, "payload": m.payload}); err != nil {
+		return err
+	}
+	m.value, m.payload = v, p
+	return nil
+}
+
+func (m *themeModule) Rollback(_ context.Context, snap *core.Snapshot) error {
+	var before map[string]string
+	if err := snap.GetJSON("before.json", &before); err != nil {
+		return err
+	}
+	m.value, m.payload = before["value"], before["payload"]
+	return nil
+}
+
+// Настройки между машинами на настоящем Syncthing: состояние и файл-приложение едут через
+// служебную папку состояний, вторая машина строит план, применяет, после этого обратно ничего не уходит.
+func TestIntegrationSettingsTravelViaSyncthing(t *testing.T) {
+	bin := skipUnlessIT(t)
+	ctx := context.Background()
+	a, b := startInstance(t, bin, "PC-A"), startInstance(t, bin, "PC-B")
+	pairWith(t, a, b, filepath.Join(t.TempDir(), "t"))
+	pairWith(t, b, a, filepath.Join(t.TempDir(), "t"))
+
+	stateA, stateB := filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "state")
+	for _, x := range []struct {
+		in   *instance
+		path string
+	}{{a, stateA}, {b, stateB}} {
+		peers, err := x.in.client.DeviceIDs(ctx, x.in.id)
+		if err != nil || len(peers) != 1 {
+			t.Fatalf("peers=%v err=%v", peers, err)
+		}
+		if err := ApplyFolder(ctx, x.in.client, x.in.id, peers, StateFolderSpec(x.path, 1, 10)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	modA := &themeModule{value: "light", payload: "wallpaper-bytes-from-A"}
+	modB := &themeModule{value: "dark", payload: "old-wallpaper"}
+	engine := func(machine, state string, m core.Module) *core.Engine {
+		return &core.Engine{
+			Machine: machine, State: core.StateDir{Root: state},
+			Snaps:   &core.SnapshotStore{Dir: filepath.Join(t.TempDir(), "snaps")},
+			Journal: &core.Journal{Path: filepath.Join(t.TempDir(), "journal.jsonl")},
+			Modules: []core.Module{m},
+		}
+	}
+	engA, engB := engine("PC-A", stateA, modA), engine("PC-B", stateB, modB)
+
+	// B фиксирует своё состояние раньше, чем A меняет своё: правка A новее.
+	if _, err := engB.Export(ctx); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if _, err := engA.Export(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Состояние и файл-приложение A доезжают до B через Syncthing.
+	waitFor(t, "состояние и файл A доехали до B", 90*time.Second, func() bool {
+		plan, err := engB.Plan(ctx, nil)
+		return err == nil && len(plan) == 1 && plan[0].Err == nil
+	})
+	plan, _ := engB.Plan(ctx, nil)
+	if plan[0].Source != "PC-A" || plan[0].Changes[0].After != "light" {
+		t.Fatalf("plan = %+v", plan)
+	}
+	run, _, err := engB.Apply(ctx, nil)
+	if err != nil || run == nil || modB.value != "light" || modB.payload != "wallpaper-bytes-from-A" {
+		t.Fatalf("run=%v value=%q payload=%q err=%v", run, modB.value, modB.payload, err)
+	}
+
+	// Нет пинг-понга: состояние B дошло до A, но A ничего не применяет.
+	waitFor(t, "состояние B доехало до A", 90*time.Second, func() bool {
+		sf, err := engA.State.Read("PC-B", "theme")
+		return err == nil && sf != nil
+	})
+	if plan, err := engA.Plan(ctx, nil); err != nil || len(plan) != 0 {
+		t.Fatalf("A получил своё же состояние обратно: %+v err=%v", plan, err)
+	}
+
+	// Откат на B: значения вернулись, и B больше не получает то же самое от A.
+	if _, err := engB.Rollback(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if modB.value != "dark" || modB.payload != "old-wallpaper" {
+		t.Fatalf("после отката: %q / %q", modB.value, modB.payload)
+	}
+	if plan, _ := engB.Plan(ctx, nil); len(plan) != 0 {
+		t.Fatalf("после отката план не пуст: %+v", plan)
 	}
 }
 
