@@ -20,7 +20,10 @@ type Settings struct {
 	TestFolderID   string `json:"testFolderId"`   // идентификатор тестовой папки в Syncthing
 	TestFolderPath string `json:"testFolderPath"` // где лежит тестовая папка на этой машине
 
-	Ignores       []string `json:"ignores"`       // пусто = DefaultIgnores (см. ignores.go)
+	ManifestPath  string `json:"manifestPath"`  // пусто = envsync.yaml в папке агента
+	AllowLiveData bool   `json:"allowLiveData"` // false (по умолчанию): синкаются только папки с test: true
+
+	Ignores       []string `json:"ignores"`       // исключения тестовой папки; пусто = core.DefaultIgnores
 	WatcherDelayS int      `json:"watcherDelayS"` // задержка отклика на изменения файлов, секунды
 	MaxConflicts  int      `json:"maxConflicts"`  // сколько конфликтных копий хранить на файл
 
@@ -67,6 +70,14 @@ func LoadSettings(baseDir string) (Settings, error) {
 	}
 	s.baseDir = baseDir
 	return s, nil
+}
+
+// ManifestFile — путь к манифесту: из settings.json или envsync.yaml в папке агента.
+func (s Settings) ManifestFile() string {
+	if s.ManifestPath != "" {
+		return s.ManifestPath
+	}
+	return filepath.Join(s.baseDir, "envsync.yaml")
 }
 
 // BaseDir — папка агента.

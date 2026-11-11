@@ -173,6 +173,23 @@ func (c *Client) defaults(ctx context.Context, kind string) (cfgObject, error) {
 	return obj, err
 }
 
+// DeviceIDs возвращает Device ID всех устройств в конфиге, кроме самого себя.
+func (c *Client) DeviceIDs(ctx context.Context, selfID string) ([]string, error) {
+	var devs []struct {
+		DeviceID string `json:"deviceID"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/rest/config/devices", nil, &devs); err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, d := range devs {
+		if d.DeviceID != selfID {
+			ids = append(ids, d.DeviceID)
+		}
+	}
+	return ids, nil
+}
+
 // Device возвращает устройство из конфига или nil, если такого нет.
 func (c *Client) Device(ctx context.Context, id string) (cfgObject, error) {
 	var obj cfgObject

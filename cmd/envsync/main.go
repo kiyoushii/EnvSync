@@ -25,6 +25,9 @@ const usage = `envsync — синхронизация среды Windows (эта
   status                        состояние Tailscale, Syncthing и связи со вторым устройством
   audit                         проверить, что конфиг Syncthing слушает только Tailscale
   pair <имя-в-tailscale> <id>   добавить вторую машину (dry-run и подтверждение)
+  manifest check                проверить envsync.yaml и показать, как он раскрывается на этой машине
+                                (--machine ИМЯ --home ПУТЬ: примерить на другую машину)
+  apply                         привести папки в Syncthing в соответствие с манифестом (dry-run и подтверждение)
 `
 
 func main() {
@@ -70,6 +73,10 @@ func loadEnv() (*env, error) {
 }
 
 func dispatch(ctx context.Context, cmd string, args []string) error {
+	// Проверка манифеста ничего не меняет и не требует ни Syncthing, ни Tailscale.
+	if cmd == "manifest" {
+		return cmdManifest(args)
+	}
 	e, err := loadEnv()
 	if err != nil {
 		return err
@@ -89,6 +96,8 @@ func dispatch(ctx context.Context, cmd string, args []string) error {
 		return e.cmdAudit()
 	case "pair":
 		return e.cmdPair(ctx, args)
+	case "apply":
+		return e.cmdApply(ctx, args)
 	default:
 		fmt.Print(usage)
 		return fmt.Errorf("неизвестная команда %q", cmd)

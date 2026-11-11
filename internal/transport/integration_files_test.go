@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kiyoushii/EnvSync/internal/core"
 )
 
 // Сценарии этапа 2 (файловый MVP). Идут на двух настоящих Syncthing на loopback
@@ -298,6 +301,87 @@ func TestIntegrationIgnoredFilesAreNotSynced(t *testing.T) {
 		if !exists(filepath.Join(e.dirA, filepath.FromSlash(rel))) {
 			t.Errorf("исходный файл на A пропал: %s", rel)
 		}
+	}
+}
+
+// Критерий этапа 3 на настоящем Syncthing: один манифест, у двух «машин» корень синка лежит
+// в разных местах (как на разных дисках), папка с одним ID связывает их, файлы ходят в обе стороны.
+func TestIntegrationManifestWithDifferentRoots(t *testing.T) {
+	bin := skipUnlessIT(t)
+	ctx := context.Background()
+	a := startInstance(t, bin, "PC-A")
+	b := startInstance(t, bin, "PC-B")
+
+	rootA := filepath.Join(t.TempDir(), "диск-C", "Sync")
+	rootB := filepath.Join(t.TempDir(), "диск-D", "Данные", "EnvSync")
+	manifest := fmt.Sprintf(`schema: 1
+folders:
+  - id: projects
+    path: '{{sync_root}}\Проекты'
+  - id: docs
+    path: '{{sync_root}}\Docs'
+machines:
+  PC-A: {vars: {sync_root: '%s'}}
+  PC-B:
+    vars: {sync_root: '%s'}
+    folders:
+      docs: {skip: true}
+`, rootA, rootB)
+	m, err := core.ParseManifest([]byte(manifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	foldersA, err := m.Resolve(core.Env{Machine: "PC-A", User: "u", Home: filepath.Dir(rootA)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foldersB, err := m.Resolve(core.Env{Machine: "pc-b", User: "u", Home: filepath.Dir(rootB)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(foldersA) != 2 || len(foldersB) != 1 {
+		t.Fatalf("A=%v B=%v: ожидалось 2 и 1 папка (docs на B пропущена)", foldersA, foldersB)
+	}
+
+	// Сопряжение устройств обычным путём (заодно создаёт тестовую папку).
+	pairWith(t, a, b, filepath.Join(t.TempDir(), "t"))
+	pairWith(t, b, a, filepath.Join(t.TempDir(), "t"))
+	s := Settings{WatcherDelayS: 1, MaxConflicts: 10}
+	for _, x := range []struct {
+		in      *instance
+		folders []core.ResolvedFolder
+	}{{a, foldersA}, {b, foldersB}} {
+		peers, err := x.in.client.DeviceIDs(ctx, x.in.id)
+		if err != nil || len(peers) != 1 {
+			t.Fatalf("устройства %s: %v err=%v", x.in.name, peers, err)
+		}
+		for _, f := range x.folders {
+			if err := ApplyFolder(ctx, x.in.client, x.in.id, peers, FolderSpecFrom(f, s)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	pa, pb := foldersA[0].Path, foldersB[0].Path
+	if pa == pb {
+		t.Fatalf("пути должны различаться: %s", pa)
+	}
+	t.Logf("projects: A → %s, B → %s", pa, pb)
+
+	mustWrite(t, filepath.Join(pa, "кириллица.txt"), "с A")
+	waitFor(t, "файл доехал с A на B по другому пути", 90*time.Second, func() bool {
+		return readOrEmpty(filepath.Join(pb, "кириллица.txt")) == "с A"
+	})
+	mustWrite(t, filepath.Join(pb, "ответ.txt"), "с B")
+	waitFor(t, "файл доехал с B на A", 90*time.Second, func() bool {
+		return readOrEmpty(filepath.Join(pa, "ответ.txt")) == "с B"
+	})
+
+	// Папка docs пропущена на B: файл из неё туда не попадает, B папку не принимает автоматически.
+	mustWrite(t, filepath.Join(foldersA[1].Path, "секрет.txt"), "только на A")
+	time.Sleep(8 * time.Second)
+	if _, err := os.Stat(filepath.Join(rootB, "Docs", "секрет.txt")); err == nil {
+		t.Error("папка docs, пропущенная в профиле B, оказалась на B")
 	}
 }
 

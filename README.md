@@ -2,8 +2,9 @@
 
 Синхронизация среды Windows 11 между двумя машинами: файлы, настройки, оформление, программы.
 
-Статус: **этап 1 (сеть и сопряжение)**, в работе. План — в [docs/stage-1.md](docs/stage-1.md),
-решения и причины — в [ARCHITECTURE.md](ARCHITECTURE.md).
+Статус: этапы 0–3 выполнены (план, сеть и сопряжение, файловый MVP, манифест и профили машин).
+Планы и результаты этапов — в [docs/](docs/), решения и причины — в [ARCHITECTURE.md](ARCHITECTURE.md).
+Пример манифеста — [envsync.example.yaml](envsync.example.yaml).
 
 ## Замер среды (только чтение)
 
@@ -41,5 +42,7 @@ $env:ENVSYNC_IT = "1"; go test ./internal/transport -run Integration -timeout 5m
 | `envsync status` | состояние Tailscale, Syncthing и связи со вторым устройством |
 | `envsync audit` | проверяет, что конфиг Syncthing соответствует правилам безопасности |
 | `envsync pair <имя-в-tailscale> <device-id>` | добавляет вторую машину (dry-run, затем подтверждение) |
+| `envsync manifest check [--machine ИМЯ --home ПУТЬ]` | проверяет `envsync.yaml` и показывает, как он раскрывается на этой (или другой) машине; ничего не меняет |
+| `envsync apply` | приводит папки в Syncthing в соответствие с манифестом (dry-run, затем подтверждение); только папки `test: true`, пока не включён `allowLiveData` |
 
 Папка агента переопределяется переменной `ENVSYNC_HOME`, настройки лежат в `settings.json` рядом.

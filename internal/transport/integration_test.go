@@ -14,20 +14,22 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/kiyoushii/EnvSync/internal/core"
 )
 
-// Интеграционные тесты с настоящими Syncthing. Запускаются только явно:
+// РРЅС‚РµРіСЂР°С†РёРѕРЅРЅС‹Рµ С‚РµСЃС‚С‹ СЃ РЅР°СЃС‚РѕСЏС‰РёРјРё Syncthing. Р—Р°РїСѓСЃРєР°СЋС‚СЃСЏ С‚РѕР»СЊРєРѕ СЏРІРЅРѕ:
 //
 //	set ENVSYNC_IT=1 && go test ./internal/transport -run Integration -timeout 15m -v
 //
-// Все экземпляры живут во временных папках и слушают только 127.0.0.1,
-// поэтому ни сеть, ни брандмауэр, ни настоящие данные не затрагиваются.
+// Р’СЃРµ СЌРєР·РµРјРїР»СЏСЂС‹ Р¶РёРІСѓС‚ РІРѕ РІСЂРµРјРµРЅРЅС‹С… РїР°РїРєР°С… Рё СЃР»СѓС€Р°СЋС‚ С‚РѕР»СЊРєРѕ 127.0.0.1,
+// РїРѕСЌС‚РѕРјСѓ РЅРё СЃРµС‚СЊ, РЅРё Р±СЂР°РЅРґРјР°СѓСЌСЂ, РЅРё РЅР°СЃС‚РѕСЏС‰РёРµ РґР°РЅРЅС‹Рµ РЅРµ Р·Р°С‚СЂР°РіРёРІР°СЋС‚СЃСЏ.
 
-// skipUnlessIT пропускает тест без ENVSYNC_IT=1 и возвращает путь к syncthing.exe.
+// skipUnlessIT РїСЂРѕРїСѓСЃРєР°РµС‚ С‚РµСЃС‚ Р±РµР· ENVSYNC_IT=1 Рё РІРѕР·РІСЂР°С‰Р°РµС‚ РїСѓС‚СЊ Рє syncthing.exe.
 func skipUnlessIT(t *testing.T) string {
 	t.Helper()
 	if os.Getenv("ENVSYNC_IT") != "1" {
-		t.Skip("интеграционный тест: задайте ENVSYNC_IT=1")
+		t.Skip("РёРЅС‚РµРіСЂР°С†РёРѕРЅРЅС‹Р№ С‚РµСЃС‚: Р·Р°РґР°Р№С‚Рµ ENVSYNC_IT=1")
 	}
 	bin, err := FindSyncthing(Settings{})
 	if err != nil {
@@ -36,7 +38,7 @@ func skipUnlessIT(t *testing.T) string {
 	return bin
 }
 
-// instance — один запущенный (или остановленный) Syncthing с собственной папкой.
+// instance вЂ” РѕРґРёРЅ Р·Р°РїСѓС‰РµРЅРЅС‹Р№ (РёР»Рё РѕСЃС‚Р°РЅРѕРІР»РµРЅРЅС‹Р№) Syncthing СЃ СЃРѕР±СЃС‚РІРµРЅРЅРѕР№ РїР°РїРєРѕР№.
 type instance struct {
 	name     string
 	bin      string
@@ -60,7 +62,7 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-// newInstance генерирует конфиг и применяет ТОТ ЖЕ HardenConfigFile, что и боевой агент.
+// newInstance РіРµРЅРµСЂРёСЂСѓРµС‚ РєРѕРЅС„РёРі Рё РїСЂРёРјРµРЅСЏРµС‚ РўРћРў Р–Р• HardenConfigFile, С‡С‚Рѕ Рё Р±РѕРµРІРѕР№ Р°РіРµРЅС‚.
 func newInstance(t *testing.T, bin, name string) *instance {
 	t.Helper()
 	home := filepath.Join(t.TempDir(), name)
@@ -76,7 +78,7 @@ func newInstance(t *testing.T, bin, name string) *instance {
 		t.Fatal(err)
 	}
 	if bad, err := AuditConfigFile(cfg); err != nil || len(bad) > 0 {
-		t.Fatalf("аудит: %v %v", bad, err)
+		t.Fatalf("Р°СѓРґРёС‚: %v %v", bad, err)
 	}
 	key, err := ReadAPIKey(cfg)
 	if err != nil {
@@ -86,7 +88,7 @@ func newInstance(t *testing.T, bin, name string) *instance {
 	return in
 }
 
-// start запускает Syncthing с теми же флагами, что и агент, и ждёт готовности REST.
+// start Р·Р°РїСѓСЃРєР°РµС‚ Syncthing СЃ С‚РµРјРё Р¶Рµ С„Р»Р°РіР°РјРё, С‡С‚Рѕ Рё Р°РіРµРЅС‚, Рё Р¶РґС‘С‚ РіРѕС‚РѕРІРЅРѕСЃС‚Рё REST.
 func (in *instance) start(t *testing.T) {
 	t.Helper()
 	cmd := exec.Command(in.bin, "serve", "--home", in.home, "--no-browser", "--no-upgrade", "--no-restart", "--no-port-probing")
@@ -109,7 +111,7 @@ func (in *instance) start(t *testing.T) {
 	in.id = id
 }
 
-// stop останавливает Syncthing: корректно (через REST) или «жёстко» (как обрыв питания/сети).
+// stop РѕСЃС‚Р°РЅР°РІР»РёРІР°РµС‚ Syncthing: РєРѕСЂСЂРµРєС‚РЅРѕ (С‡РµСЂРµР· REST) РёР»Рё В«Р¶С‘СЃС‚РєРѕВ» (РєР°Рє РѕР±СЂС‹РІ РїРёС‚Р°РЅРёСЏ/СЃРµС‚Рё).
 func (in *instance) stop(graceful bool) {
 	if in.cmd == nil {
 		return
@@ -131,7 +133,7 @@ func (in *instance) stop(graceful bool) {
 	in.cmd = nil
 }
 
-// startInstance — новый экземпляр, запущенный и автоматически останавливаемый в конце теста.
+// startInstance вЂ” РЅРѕРІС‹Р№ СЌРєР·РµРјРїР»СЏСЂ, Р·Р°РїСѓС‰РµРЅРЅС‹Р№ Рё Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё РѕСЃС‚Р°РЅР°РІР»РёРІР°РµРјС‹Р№ РІ РєРѕРЅС†Рµ С‚РµСЃС‚Р°.
 func startInstance(t *testing.T, bin, name string) *instance {
 	t.Helper()
 	in := newInstance(t, bin, name)
@@ -140,8 +142,8 @@ func startInstance(t *testing.T, bin, name string) *instance {
 	return in
 }
 
-// pairPlan собирает план так же, как BuildPairPlan, но с адресом на loopback.
-// Задержку отклика ставим 1 с, чтобы тесты шли быстрее.
+// pairPlan СЃРѕР±РёСЂР°РµС‚ РїР»Р°РЅ С‚Р°Рє Р¶Рµ, РєР°Рє BuildPairPlan, РЅРѕ СЃ Р°РґСЂРµСЃРѕРј РЅР° loopback.
+// Р—Р°РґРµСЂР¶РєСѓ РѕС‚РєР»РёРєР° СЃС‚Р°РІРёРј 1 СЃ, С‡С‚РѕР±С‹ С‚РµСЃС‚С‹ С€Р»Рё Р±С‹СЃС‚СЂРµРµ.
 func pairPlan(to *instance, folderPath string) *PairPlan {
 	return &PairPlan{
 		PeerName:      to.name,
@@ -149,7 +151,7 @@ func pairPlan(to *instance, folderPath string) *PairPlan {
 		Address:       "tcp://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(to.syncPort)),
 		FolderID:      "envsync-test",
 		FolderPath:    folderPath,
-		Ignores:       DefaultIgnores,
+		Ignores:       core.DefaultIgnores,
 		WatcherDelayS: 1,
 		MaxConflicts:  10,
 	}
@@ -158,11 +160,11 @@ func pairPlan(to *instance, folderPath string) *PairPlan {
 func pairWith(t *testing.T, from, to *instance, folderPath string) {
 	t.Helper()
 	if err := ApplyPair(context.Background(), from.client, from.id, pairPlan(to, folderPath)); err != nil {
-		t.Fatalf("pair %s→%s: %v", from.name, to.name, err)
+		t.Fatalf("pair %sв†’%s: %v", from.name, to.name, err)
 	}
 }
 
-// pairEnv — две сопряжённые машины с общей тестовой папкой.
+// pairEnv вЂ” РґРІРµ СЃРѕРїСЂСЏР¶С‘РЅРЅС‹Рµ РјР°С€РёРЅС‹ СЃ РѕР±С‰РµР№ С‚РµСЃС‚РѕРІРѕР№ РїР°РїРєРѕР№.
 type pairEnv struct {
 	a, b       *instance
 	dirA, dirB string
@@ -185,7 +187,7 @@ func newPairEnv(t *testing.T) *pairEnv {
 
 func (e *pairEnv) waitConnected(t *testing.T) {
 	t.Helper()
-	waitFor(t, "A и B соединились", 60*time.Second, func() bool {
+	waitFor(t, "A Рё B СЃРѕРµРґРёРЅРёР»РёСЃСЊ", 60*time.Second, func() bool {
 		c, err := e.a.client.Connections(context.Background())
 		return err == nil && c[e.b.id].Connected
 	})
@@ -207,10 +209,10 @@ func waitFor(t *testing.T, what string, timeout time.Duration, cond func() bool)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("не дождались: %s (за %v)", what, timeout)
+	t.Fatalf("РЅРµ РґРѕР¶РґР°Р»РёСЃСЊ: %s (Р·Р° %v)", what, timeout)
 }
 
-// --- работа с файлами в тестах ---
+// --- СЂР°Р±РѕС‚Р° СЃ С„Р°Р№Р»Р°РјРё РІ С‚РµСЃС‚Р°С… ---
 
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
@@ -235,7 +237,7 @@ func exists(path string) bool {
 	return err == nil
 }
 
-// writeRandomFile пишет файл из случайных байт и возвращает его SHA-256.
+// writeRandomFile РїРёС€РµС‚ С„Р°Р№Р» РёР· СЃР»СѓС‡Р°Р№РЅС‹С… Р±Р°Р№С‚ Рё РІРѕР·РІСЂР°С‰Р°РµС‚ РµРіРѕ SHA-256.
 func writeRandomFile(t *testing.T, path string, mb int) string {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -266,51 +268,51 @@ func fileHash(path string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// --- сценарии этапа 1 ---
+// --- СЃС†РµРЅР°СЂРёРё СЌС‚Р°РїР° 1 ---
 
 func TestIntegrationPairAndSync(t *testing.T) {
 	e := newPairEnv(t)
 
-	// Файл, созданный на A, доезжает до B, и наоборот.
-	mustWrite(t, filepath.Join(e.dirA, "из-A.txt"), "привет от A")
-	waitFor(t, "файл из A появился в B", 120*time.Second, func() bool {
-		return readOrEmpty(filepath.Join(e.dirB, "из-A.txt")) == "привет от A"
+	// Р¤Р°Р№Р», СЃРѕР·РґР°РЅРЅС‹Р№ РЅР° A, РґРѕРµР·Р¶Р°РµС‚ РґРѕ B, Рё РЅР°РѕР±РѕСЂРѕС‚.
+	mustWrite(t, filepath.Join(e.dirA, "РёР·-A.txt"), "РїСЂРёРІРµС‚ РѕС‚ A")
+	waitFor(t, "С„Р°Р№Р» РёР· A РїРѕСЏРІРёР»СЃСЏ РІ B", 120*time.Second, func() bool {
+		return readOrEmpty(filepath.Join(e.dirB, "РёР·-A.txt")) == "РїСЂРёРІРµС‚ РѕС‚ A"
 	})
-	mustWrite(t, filepath.Join(e.dirB, "из-B.txt"), "ответ от B")
-	waitFor(t, "файл из B появился в A", 120*time.Second, func() bool {
-		return readOrEmpty(filepath.Join(e.dirA, "из-B.txt")) == "ответ от B"
+	mustWrite(t, filepath.Join(e.dirB, "РёР·-B.txt"), "РѕС‚РІРµС‚ РѕС‚ B")
+	waitFor(t, "С„Р°Р№Р» РёР· B РїРѕСЏРІРёР»СЃСЏ РІ A", 120*time.Second, func() bool {
+		return readOrEmpty(filepath.Join(e.dirA, "РёР·-B.txt")) == "РѕС‚РІРµС‚ РѕС‚ B"
 	})
 }
 
-// Негативная проверка критерия этапа 1: чужое устройство подключиться не может
-// и автоматически не добавляется.
+// РќРµРіР°С‚РёРІРЅР°СЏ РїСЂРѕРІРµСЂРєР° РєСЂРёС‚РµСЂРёСЏ СЌС‚Р°РїР° 1: С‡СѓР¶РѕРµ СѓСЃС‚СЂРѕР№СЃС‚РІРѕ РїРѕРґРєР»СЋС‡РёС‚СЊСЃСЏ РЅРµ РјРѕР¶РµС‚
+// Рё Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё РЅРµ РґРѕР±Р°РІР»СЏРµС‚СЃСЏ.
 func TestIntegrationStrangerIsRejected(t *testing.T) {
 	bin := skipUnlessIT(t)
 	a := startInstance(t, bin, "A")
 	stranger := startInstance(t, bin, "stranger")
 	ctx := context.Background()
 
-	// Чужой знает адрес A и сам добавляет A у себя, но A чужого не добавлял.
+	// Р§СѓР¶РѕР№ Р·РЅР°РµС‚ Р°РґСЂРµСЃ A Рё СЃР°Рј РґРѕР±Р°РІР»СЏРµС‚ A Сѓ СЃРµР±СЏ, РЅРѕ A С‡СѓР¶РѕРіРѕ РЅРµ РґРѕР±Р°РІР»СЏР».
 	plan := pairPlan(a, filepath.Join(t.TempDir(), "x"))
 	plan.PeerName = "A"
 	if err := ApplyPair(ctx, stranger.client, stranger.id, plan); err != nil {
 		t.Fatal(err)
 	}
 
-	// Даём время на несколько попыток подключения.
+	// Р”Р°С‘Рј РІСЂРµРјСЏ РЅР° РЅРµСЃРєРѕР»СЊРєРѕ РїРѕРїС‹С‚РѕРє РїРѕРґРєР»СЋС‡РµРЅРёСЏ.
 	time.Sleep(15 * time.Second)
 
 	if c, err := stranger.client.Connections(ctx); err != nil || c[a.id].Connected {
-		t.Fatalf("чужой подключился к A: %+v err=%v", c[a.id], err)
+		t.Fatalf("С‡СѓР¶РѕР№ РїРѕРґРєР»СЋС‡РёР»СЃСЏ Рє A: %+v err=%v", c[a.id], err)
 	}
 	if c, err := a.client.Connections(ctx); err != nil || c[stranger.id].Connected {
-		t.Fatalf("A принял чужого: %+v err=%v", c[stranger.id], err)
+		t.Fatalf("A РїСЂРёРЅСЏР» С‡СѓР¶РѕРіРѕ: %+v err=%v", c[stranger.id], err)
 	}
 	if dev, err := a.client.Device(ctx, stranger.id); err != nil || dev != nil {
-		t.Fatalf("чужой попал в конфиг A: %v err=%v", dev, err)
+		t.Fatalf("С‡СѓР¶РѕР№ РїРѕРїР°Р» РІ РєРѕРЅС„РёРі A: %v err=%v", dev, err)
 	}
-	// Тест не вхолостую: попытка дошла до A и была отложена как «ожидающая», а не принята.
-	waitFor(t, "A заметил попытку чужого", 30*time.Second, func() bool {
+	// РўРµСЃС‚ РЅРµ РІС…РѕР»РѕСЃС‚СѓСЋ: РїРѕРїС‹С‚РєР° РґРѕС€Р»Р° РґРѕ A Рё Р±С‹Р»Р° РѕС‚Р»РѕР¶РµРЅР° РєР°Рє В«РѕР¶РёРґР°СЋС‰Р°СЏВ», Р° РЅРµ РїСЂРёРЅСЏС‚Р°.
+	waitFor(t, "A Р·Р°РјРµС‚РёР» РїРѕРїС‹С‚РєСѓ С‡СѓР¶РѕРіРѕ", 30*time.Second, func() bool {
 		p, err := a.client.PendingDevices(ctx)
 		_, seen := p[stranger.id]
 		return err == nil && seen

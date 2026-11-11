@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"os"
 	"regexp"
-	"strconv"
 	"strings"
+
+	"github.com/kiyoushii/EnvSync/internal/core"
 )
 
 // Device ID Syncthing: 8 групп по 7 символов (A–Z и 2–7), разделённых дефисами.
@@ -82,7 +82,7 @@ func (p *PairPlan) Describe() string {
 	if p.WatcherDelayS > 0 || p.MaxConflicts != 0 {
 		fmt.Fprintf(&b, "     отклик на изменения: %d с; конфликтных копий на файл: до %d\n", p.WatcherDelayS, p.MaxConflicts)
 	}
-	if n := countPatterns(p.Ignores); n > 0 {
+	if n := core.CountPatterns(p.Ignores); n > 0 {
 		fmt.Fprintf(&b, "  3. Задать исключения папки (%d шаблонов): .git, node_modules, кэши, незавершённые загрузки и т. п.\n", n)
 	}
 	fmt.Fprintf(&b, "Ничего другого не затрагивается.\n")
@@ -107,55 +107,12 @@ func ApplyPair(ctx context.Context, c *Client, selfID string, p *PairPlan) error
 	}
 
 	// --- тестовая папка ---
-	if err := os.MkdirAll(p.FolderPath, 0o700); err != nil {
-		return fmt.Errorf("создание папки %s: %w", p.FolderPath, err)
-	}
-	folder, err := c.Folder(ctx, p.FolderID)
-	if err != nil {
-		return fmt.Errorf("чтение папки: %w", err)
-	}
-	if folder == nil {
-		if folder, err = c.FolderDefaults(ctx); err != nil {
-			return fmt.Errorf("шаблон папки: %w", err)
-		}
-		folder["id"] = p.FolderID
-		folder["label"] = p.FolderID
-		folder["path"] = p.FolderPath
-		folder["type"] = "sendreceive"
-		folder["devices"] = []any{cfgObject{"deviceID": selfID}}
-		folder["versioning"] = cfgObject{
-			"type":   "trashcan",
-			"params": cfgObject{"cleanoutDays": strconv.Itoa(30)},
-		}
-	}
-	if !folderHasDevice(folder, p.PeerID) {
-		devs, _ := folder["devices"].([]any)
-		folder["devices"] = append(devs, cfgObject{"deviceID": p.PeerID})
-	}
-	folder["fsWatcherEnabled"] = true
-	if p.WatcherDelayS > 0 {
-		folder["fsWatcherDelayS"] = p.WatcherDelayS
-	}
-	if p.MaxConflicts != 0 {
-		folder["maxConflicts"] = p.MaxConflicts
-	}
-	if err := c.PutFolder(ctx, p.FolderID, folder); err != nil {
-		return fmt.Errorf("настройка папки: %w", err)
-	}
-	if len(p.Ignores) > 0 {
-		if err := c.SetIgnores(ctx, p.FolderID, p.Ignores); err != nil {
-			return fmt.Errorf("исключения папки: %w", err)
-		}
-	}
-	return nil
-}
-
-func folderHasDevice(folder cfgObject, id string) bool {
-	devs, _ := folder["devices"].([]any)
-	for _, d := range devs {
-		if m, ok := d.(map[string]any); ok && m["deviceID"] == id {
-			return true
-		}
-	}
-	return false
+	return ApplyFolder(ctx, c, selfID, []string{p.PeerID}, FolderSpec{
+		ID:            p.FolderID,
+		Path:          p.FolderPath,
+		Ignores:       p.Ignores,
+		KeepDays:      30,
+		WatcherDelayS: p.WatcherDelayS,
+		MaxConflicts:  p.MaxConflicts,
+	})
 }
