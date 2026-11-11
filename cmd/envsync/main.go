@@ -30,6 +30,7 @@ const usage = `envsync — синхронизация среды Windows (эта
   apply                         привести папки в Syncthing в соответствие с манифестом (dry-run и подтверждение)
   settings <действие>           настройки Windows, оформление, конфиги приложений: export, plan, apply, rollback, runs, journal
                                 (подробнее: envsync settings)
+  software <действие>           программы через winget: scan, plan, apply, rollback (подробнее: envsync software)
 `
 
 func main() {
@@ -102,6 +103,8 @@ func dispatch(ctx context.Context, cmd string, args []string) error {
 		return e.cmdApply(ctx, args)
 	case "settings":
 		return e.cmdSettings(ctx, args)
+	case "software":
+		return e.cmdSoftware(ctx, args)
 	default:
 		fmt.Print(usage)
 		return fmt.Errorf("неизвестная команда %q", cmd)

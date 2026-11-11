@@ -16,7 +16,10 @@ import (
 // SupportedSchema — какую версию схемы манифеста понимает этот агент.
 // Манифест новее агента не применяется: агент старой версии не должен «понимать наполовину»
 // и портить данные (принцип из раздела 7 исходного плана).
-const SupportedSchema = 1
+//
+// Версии схемы: 1 — папки и профили машин; 2 — добавлен раздел software (программы через winget).
+// Манифест версии 1 по-прежнему корректен.
+const SupportedSchema = 2
 
 // Manifest — содержимое envsync.yaml: что синкается и чем отличаются машины.
 // Что в манифесте не написано, агент не трогает.
@@ -25,7 +28,33 @@ type Manifest struct {
 	Vars     map[string]string  `yaml:"vars"`     // свои переменные путей, доступны как {{имя}}
 	Ignore   []string           `yaml:"ignore"`   // общие исключения; если не задано, берутся DefaultIgnores
 	Folders  []FolderDef        `yaml:"folders"`  // синкаемые папки
+	Software *SoftwareDef       `yaml:"software"` // программы (схема 2)
 	Machines map[string]Machine `yaml:"machines"` // профили машин по имени компьютера
+}
+
+// SoftwareDef — желаемый набор программ.
+type SoftwareDef struct {
+	Winget []WingetPkg  `yaml:"winget"` // ставятся через winget
+	Remove []string     `yaml:"remove"` // удалять только явно перечисленное и только с подтверждением
+	Manual []ManualItem `yaml:"manual"` // программы, которых нет в winget: показываются списком «вручную»
+}
+
+// WingetPkg — пакет winget.
+type WingetPkg struct {
+	ID      string `yaml:"id"`
+	Version string `yaml:"version"` // пусто = последняя
+	Scope   string `yaml:"scope"`   // user или machine; пусто = по умолчанию пакета
+}
+
+// ManualItem — программа, которую нужно поставить вручную.
+type ManualItem struct {
+	Name string `yaml:"name"`
+	Note string `yaml:"note"`
+}
+
+// SoftwareOverride — переопределения программ для машины.
+type SoftwareOverride struct {
+	Skip []string `yaml:"skip"` // эти пакеты на этой машине не ставить и не удалять
 }
 
 // FolderDef — одна синкаемая папка. ID одинаков на всех машинах, путь у каждой свой (через переменные).
@@ -39,8 +68,9 @@ type FolderDef struct {
 
 // Machine — переопределения для конкретной машины.
 type Machine struct {
-	Vars    map[string]string         `yaml:"vars"`    // переопределяют переменные (например sync_root на другом диске)
-	Folders map[string]FolderOverride `yaml:"folders"` // переопределения по ID папки
+	Vars     map[string]string         `yaml:"vars"`     // переопределяют переменные (например sync_root на другом диске)
+	Folders  map[string]FolderOverride `yaml:"folders"`  // переопределения по ID папки
+	Software SoftwareOverride          `yaml:"software"` // переопределения программ
 }
 
 // FolderOverride — особый путь папки на этой машине или её пропуск.
@@ -52,7 +82,44 @@ type FolderOverride struct {
 var (
 	folderIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 	varNameRe  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+	wingetIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)
 )
+
+func (s *SoftwareDef) validate() []error {
+	var errs []error
+	add := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
+	seen := map[string]bool{}
+	for i, p := range s.Winget {
+		key := strings.ToLower(p.ID)
+		switch {
+		case !wingetIDRe.MatchString(p.ID):
+			add("software.winget[%d]: недопустимый id пакета %q", i, p.ID)
+		case seen[key]:
+			add("software.winget[%d]: пакет %q повторяется", i, p.ID)
+		}
+		seen[key] = true
+		if p.Scope != "" && p.Scope != "user" && p.Scope != "machine" {
+			add("software.winget[%d] (%s): scope должен быть user или machine", i, p.ID)
+		}
+		if strings.ContainsAny(p.Version, " \t\"'&|;<>") {
+			add("software.winget[%d] (%s): недопустимая версия %q", i, p.ID, p.Version)
+		}
+	}
+	for i, id := range s.Remove {
+		if !wingetIDRe.MatchString(id) {
+			add("software.remove[%d]: недопустимый id пакета %q", i, id)
+		}
+		if seen[strings.ToLower(id)] {
+			add("software.remove[%d]: пакет %q одновременно в winget и в remove", i, id)
+		}
+	}
+	for i, it := range s.Manual {
+		if strings.TrimSpace(it.Name) == "" {
+			add("software.manual[%d]: не указано name", i)
+		}
+	}
+	return errs
+}
 
 // reservedVars — встроенные переменные, их нельзя объявлять в манифесте заново, кроме sync_root.
 var reservedVars = map[string]bool{"user": true, "home": true, "appdata": true, "localappdata": true, "machine": true}
@@ -133,8 +200,20 @@ func (m *Manifest) validate() error {
 		}
 	}
 
+	if m.Software != nil {
+		if m.Schema < 2 {
+			add("раздел software требует schema: 2")
+		}
+		errs = append(errs, m.Software.validate()...)
+	}
+
 	lower := map[string]string{}
 	for name, mc := range m.Machines {
+		for _, id := range mc.Software.Skip {
+			if !wingetIDRe.MatchString(id) {
+				add("machines.%s.software.skip: недопустимый id пакета %q", name, id)
+			}
+		}
 		key := strings.ToLower(name)
 		if prev, dup := lower[key]; dup {
 			add("machines: имена %q и %q различаются только регистром", prev, name)

@@ -7,7 +7,8 @@
 # Применение к Syncthing:   envsync apply   (сначала dry-run, потом подтверждение)
 
 # Версия схемы. Агент старее манифеста откажется его применять, чтобы не «понимать наполовину».
-schema: 1
+# 1 — папки и профили машин; 2 — добавляет раздел software (программы через winget).
+schema: 2
 
 # Переменные путей. Встроенные: {{user}}, {{home}}, {{appdata}}, {{localappdata}}, {{machine}}.
 # {{sync_root}} по умолчанию равен {{home}}; на другой машине его можно переопределить (см. machines).
@@ -32,11 +33,28 @@ folders:
   #   keep_days: 60       # сколько дней хранить удалённое в «корзине» (по умолчанию 30)
   #   ignore: ["(?i)*.log"]  # дополнительные исключения только для этой папки
 
+# Программы. Проверка: envsync software plan; установка: envsync software apply (с вашим подтверждением).
+# Агент ничего не удаляет сам: удаляются только пакеты из remove, с флагом --uninstall и подтверждением по каждому.
+software:
+  winget:
+    - id: Git.Git
+    - id: Microsoft.VisualStudioCode
+    - id: GoLang.Go
+      version: "1.27.4"      # необязательно: закрепить версию
+    # - id: Valve.Steam
+    #   scope: user          # необязательно: user или machine
+  # remove: [Some.Old.App]
+  manual:                    # программы, которых нет в winget: показываются списком «поставить вручную»
+    - name: "Пример: графический редактор"
+      note: "ставится с сайта производителя"
+
 # Профили машин: имя компьютера (без учёта регистра) -> переопределения.
 machines:
   DESKTOP-EXAMPLE:
     vars:
       sync_root: "D:\\Sync"      # на этой машине синк живёт на диске D:
+    software:
+      skip: [Valve.Steam]        # на этой машине не ставить и не удалять
   LAPTOP-EXAMPLE:
     vars:
       sync_root: "C:\\Users\\{{user}}\\Sync"
