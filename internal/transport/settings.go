@@ -20,6 +20,10 @@ type Settings struct {
 	TestFolderID   string `json:"testFolderId"`   // идентификатор тестовой папки в Syncthing
 	TestFolderPath string `json:"testFolderPath"` // где лежит тестовая папка на этой машине
 
+	Ignores       []string `json:"ignores"`       // пусто = DefaultIgnores (см. ignores.go)
+	WatcherDelayS int      `json:"watcherDelayS"` // задержка отклика на изменения файлов, секунды
+	MaxConflicts  int      `json:"maxConflicts"`  // сколько конфликтных копий хранить на файл
+
 	baseDir string // папка агента, не сериализуется
 }
 
@@ -47,6 +51,8 @@ func LoadSettings(baseDir string) (Settings, error) {
 		SyncPort:       22000,
 		TestFolderID:   "envsync-test",
 		TestFolderPath: filepath.Join(home, "EnvSyncTest"),
+		WatcherDelayS:  3, // у Syncthing по умолчанию 10 с; 3 с ближе к «почти реальному времени»
+		MaxConflicts:   10,
 		baseDir:        baseDir,
 	}
 	data, err := os.ReadFile(filepath.Join(baseDir, "settings.json"))

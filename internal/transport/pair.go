@@ -31,6 +31,11 @@ type PairPlan struct {
 	Address    string // tcp://<tailscale-ip>:порт, единственный адрес, по которому к нему ходим
 	FolderID   string
 	FolderPath string
+
+	// Параметры папки (этап 2). Нулевые значения означают «оставить как есть».
+	Ignores       []string // шаблоны исключений (.stignore)
+	WatcherDelayS int      // задержка отклика на изменения файлов
+	MaxConflicts  int      // сколько конфликтных копий хранить
 }
 
 // BuildPairPlan проверяет, что сосед действительно в нашей tailnet, и собирает план.
@@ -59,6 +64,10 @@ func BuildPairPlan(s Settings, ts *TSStatus, peerName, peerID, selfID string) (*
 		Address:    "tcp://" + netip.AddrPortFrom(peer.IPv4, uint16(s.SyncPort)).String(),
 		FolderID:   s.TestFolderID,
 		FolderPath: s.TestFolderPath,
+
+		Ignores:       s.IgnoresOrDefault(),
+		WatcherDelayS: s.WatcherDelayS,
+		MaxConflicts:  s.MaxConflicts,
 	}, nil
 }
 
@@ -70,6 +79,12 @@ func (p *PairPlan) Describe() string {
 	fmt.Fprintf(&b, "     единственный адрес: %s; автопринятие папок и режим introducer выключены\n", p.Address)
 	fmt.Fprintf(&b, "  2. Создать (если нет) тестовую папку %q: %s\n", p.FolderID, p.FolderPath)
 	fmt.Fprintf(&b, "     версионирование: корзина, 30 дней; общий доступ только для этого устройства\n")
+	if p.WatcherDelayS > 0 || p.MaxConflicts != 0 {
+		fmt.Fprintf(&b, "     отклик на изменения: %d с; конфликтных копий на файл: до %d\n", p.WatcherDelayS, p.MaxConflicts)
+	}
+	if n := countPatterns(p.Ignores); n > 0 {
+		fmt.Fprintf(&b, "  3. Задать исключения папки (%d шаблонов): .git, node_modules, кэши, незавершённые загрузки и т. п.\n", n)
+	}
 	fmt.Fprintf(&b, "Ничего другого не затрагивается.\n")
 	return b.String()
 }
@@ -117,8 +132,20 @@ func ApplyPair(ctx context.Context, c *Client, selfID string, p *PairPlan) error
 		devs, _ := folder["devices"].([]any)
 		folder["devices"] = append(devs, cfgObject{"deviceID": p.PeerID})
 	}
+	folder["fsWatcherEnabled"] = true
+	if p.WatcherDelayS > 0 {
+		folder["fsWatcherDelayS"] = p.WatcherDelayS
+	}
+	if p.MaxConflicts != 0 {
+		folder["maxConflicts"] = p.MaxConflicts
+	}
 	if err := c.PutFolder(ctx, p.FolderID, folder); err != nil {
 		return fmt.Errorf("настройка папки: %w", err)
+	}
+	if len(p.Ignores) > 0 {
+		if err := c.SetIgnores(ctx, p.FolderID, p.Ignores); err != nil {
+			return fmt.Errorf("исключения папки: %w", err)
+		}
 	}
 	return nil
 }

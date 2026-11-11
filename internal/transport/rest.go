@@ -98,9 +98,47 @@ func (c *Client) MyID(ctx context.Context) (string, error) {
 // Connection — состояние связи с одним устройством.
 type Connection struct {
 	Connected     bool   `json:"connected"`
+	Paused        bool   `json:"paused"`
 	Address       string `json:"address"`
 	Type          string `json:"type"`
 	ClientVersion string `json:"clientVersion"`
+	InBytesTotal  int64  `json:"inBytesTotal"`  // принято с момента запуска Syncthing
+	OutBytesTotal int64  `json:"outBytesTotal"` // отправлено с момента запуска Syncthing
+}
+
+// FolderStatus — сводка по папке из /rest/db/status.
+type FolderStatus struct {
+	State       string `json:"state"`       // idle, scanning, syncing...
+	NeedBytes   int64  `json:"needBytes"`   // сколько ещё нужно получить
+	NeedFiles   int64  `json:"needFiles"`   // сколько файлов ещё нужно получить
+	GlobalFiles int64  `json:"globalFiles"` // файлов в общем состоянии
+	PullErrors  int64  `json:"pullErrors"`  // файлов, которые не удалось получить
+}
+
+// FolderStatus возвращает состояние папки.
+func (c *Client) FolderStatus(ctx context.Context, folderID string) (FolderStatus, error) {
+	var st FolderStatus
+	err := c.do(ctx, http.MethodGet, "/rest/db/status?folder="+url.QueryEscape(folderID), nil, &st)
+	return st, err
+}
+
+// Rescan просит Syncthing немедленно просканировать папку (в тестах, чтобы не ждать таймеров).
+func (c *Client) Rescan(ctx context.Context, folderID string) error {
+	return c.do(ctx, http.MethodPost, "/rest/db/scan?folder="+url.QueryEscape(folderID), nil, nil)
+}
+
+// PatchOptions меняет отдельные общие настройки Syncthing (например, ограничение скорости).
+func (c *Client) PatchOptions(ctx context.Context, opts map[string]any) error {
+	return c.do(ctx, http.MethodPatch, "/rest/config/options", opts, nil)
+}
+
+// PauseDevice временно отключает синхронизацию с устройством (связь рвётся), ResumeDevice включает.
+func (c *Client) PauseDevice(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/rest/system/pause?device="+url.QueryEscape(id), nil, nil)
+}
+
+func (c *Client) ResumeDevice(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodPost, "/rest/system/resume?device="+url.QueryEscape(id), nil, nil)
 }
 
 // Connections возвращает связи по Device ID.

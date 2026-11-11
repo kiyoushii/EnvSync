@@ -20,7 +20,11 @@ const (
 
 func testSettings(t *testing.T) Settings {
 	t.Helper()
-	return Settings{SyncPort: 22000, GUIPort: 18384, TestFolderID: "envsync-test", TestFolderPath: filepath.Join(t.TempDir(), "EnvSyncTest")}
+	return Settings{
+		SyncPort: 22000, GUIPort: 18384, TestFolderID: "envsync-test",
+		TestFolderPath: filepath.Join(t.TempDir(), "EnvSyncTest"),
+		WatcherDelayS:  3, MaxConflicts: 10,
+	}
 }
 
 func TestNormalizeDeviceID(t *testing.T) {
@@ -77,6 +81,7 @@ type fakeSyncthing struct {
 	mu      sync.Mutex
 	devices map[string]map[string]any
 	folders map[string]map[string]any
+	ignores []string
 }
 
 func (f *fakeSyncthing) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -92,6 +97,13 @@ func (f *fakeSyncthing) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"deviceID": "", "addresses": []string{"dynamic"}, "autoAcceptFolders": true})
 	case p == "/rest/config/defaults/folder":
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": "", "type": "sendreceive", "fsWatcherEnabled": true})
+	case p == "/rest/db/ignores" && r.Method == http.MethodPost:
+		body, _ := io.ReadAll(r.Body)
+		var v struct {
+			Ignore []string `json:"ignore"`
+		}
+		_ = json.Unmarshal(body, &v)
+		f.ignores = v.Ignore
 	case strings.HasPrefix(p, "/rest/config/devices/"):
 		f.store(w, r, f.devices, strings.TrimPrefix(p, "/rest/config/devices/"))
 	case strings.HasPrefix(p, "/rest/config/folders/"):
@@ -158,6 +170,27 @@ func TestApplyPair(t *testing.T) {
 	}
 	if v, _ := folder["versioning"].(map[string]any); v["type"] != "trashcan" {
 		t.Errorf("versioning = %v", folder["versioning"])
+	}
+
+	// Параметры этапа 2: быстрый отклик, лимит конфликтов, исключения.
+	if folder["fsWatcherDelayS"] != float64(3) || folder["maxConflicts"] != float64(10) {
+		t.Errorf("fsWatcherDelayS/maxConflicts = %v / %v", folder["fsWatcherDelayS"], folder["maxConflicts"])
+	}
+	joined := strings.Join(f.ignores, "\n")
+	for _, want := range []string{"(?i).git", "(?i)node_modules", "(?i)*.crdownload"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("в исключениях нет %q", want)
+		}
+	}
+}
+
+func TestDescribeMentionsIgnoresAndTuning(t *testing.T) {
+	ts, _ := ParseTSStatus([]byte(tsRunningJSON))
+	s := testSettings(t)
+	plan, _ := BuildPairPlan(s, ts, "desktop-mgfilo0", peerID, selfID)
+	d := plan.Describe()
+	if !strings.Contains(d, "исключения папки") || !strings.Contains(d, "3 с") {
+		t.Errorf("dry-run не описывает исключения и отклик:\n%s", d)
 	}
 }
 
