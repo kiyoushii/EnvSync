@@ -198,6 +198,31 @@ func TestStyleOverrideFromMachineProfile(t *testing.T) {
 	}
 }
 
+// В реестре записан файл обоев, которого уже нет (удалили из Downloads): это «обоев нет», а не ошибка,
+// и такая машина должна уметь получить обои с другой.
+func TestMissingWallpaperFileMeansNoWallpaper(t *testing.T) {
+	ctx := context.Background()
+	a, b := newEnv(t), newEnv(t)
+	be := &fakeBackend{cur: Setting{Path: filepath.Join(a.srcImgs, "Без названия.jpg"), Style: "10", Tile: "0"}}
+	m := New(be, a.dataDir, a.winDir)
+	data, err := m.Export(ctx, filepath.Join(t.TempDir(), "assets"))
+	if err != nil {
+		t.Fatalf("отсутствующий файл не должен быть ошибкой: %v", err)
+	}
+	if !strings.Contains(string(data), `"has":false`) {
+		t.Fatalf("ожидалось «обоев нет»: %s", data)
+	}
+
+	// Обои с другой машины применяются поверх.
+	img := write(t, filepath.Join(b.srcImgs, "x.png"), "pixels")
+	mB := New(&fakeBackend{cur: Setting{Path: img, Style: "10", Tile: "0"}}, b.dataDir, b.winDir)
+	assets := filepath.Join(t.TempDir(), "assets")
+	state, _ := mB.Export(ctx, assets)
+	if err := m.Apply(ctx, state, assets, snap(t)); err != nil || be.cur.Path == "" || !strings.HasPrefix(be.cur.Path, a.dataDir) {
+		t.Fatalf("err=%v cur=%+v", err, be.cur)
+	}
+}
+
 func TestExportKeepsOnlyCurrentAsset(t *testing.T) {
 	ctx := context.Background()
 	a := newEnv(t)

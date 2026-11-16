@@ -163,9 +163,9 @@ func (e *Engine) PlanFrom(ctx context.Context, from string, only []string) ([]Pl
 func (e *Engine) plan(ctx context.Context, only []string, from string) ([]PlanItem, error) {
 	// Сначала фиксируем собственное состояние: если пользователь менял настройку локально позже,
 	// чем другая машина, его правка новее и не должна затираться.
-	if _, err := e.Export(ctx); err != nil {
-		return nil, err
-	}
+	// Сбой снимка одного модуля не должен блокировать план остальных (и тем более применение чужих настроек):
+	// он попадает в журнал, а для этого модуля берётся последний удачный снимок.
+	e.exportLogged(ctx)
 	machines, err := e.State.Machines()
 	if err != nil {
 		return nil, err
@@ -277,8 +277,16 @@ func (e *Engine) apply(ctx context.Context, only []string, from string) (*Run, [
 		return run, items, err
 	}
 	// Новое состояние машины фиксируем сразу: теперь оно «наше», и другая машина не будет его пересылать обратно.
-	_, err = e.Export(ctx)
-	return run, items, err
+	// Сбой снимка отдельного модуля не делает применение неудачным: оно уже прошло; сбой уходит в журнал.
+	e.exportLogged(ctx)
+	return run, items, nil
+}
+
+// exportLogged снимает состояние и пишет сбой в журнал вместо того, чтобы вернуть его.
+func (e *Engine) exportLogged(ctx context.Context) {
+	if _, err := e.Export(ctx); err != nil {
+		e.log(Entry{Action: "error", Detail: "снимок состояния: " + err.Error()})
+	}
 }
 
 // KeepLocal — решение «оставить как на этой машине» для модулей: их состояние становится самой свежей правкой,
@@ -309,8 +317,8 @@ func (e *Engine) Rollback(ctx context.Context, id string) (*Run, error) {
 	if err := e.rollbackRun(ctx, run); err != nil {
 		return run, err
 	}
-	_, err = e.Export(ctx)
-	return run, err
+	e.exportLogged(ctx)
+	return run, nil
 }
 
 // rollbackRun откатывает модули запуска в обратном порядке и помечает запуск откатанным.

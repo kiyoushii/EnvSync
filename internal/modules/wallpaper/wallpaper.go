@@ -94,9 +94,12 @@ func (m *Module) Export(_ context.Context, assets string) (json.RawMessage, erro
 		st.Has, st.System, st.Path = true, true, cur.Path
 	default:
 		sha, err := fileSHA(cur.Path)
+		if errors.Is(err, os.ErrNotExist) {
+			// В реестре записан файл, которого уже нет (картинку удалили из Downloads): реально обоев нет,
+			// и это обычное состояние, а не ошибка. Иначе такая машина вообще не смогла бы получить чужие обои.
+			return json.Marshal(st)
+		}
 		if err != nil {
-			// Картинка недоступна (например, диск отключён): состояние «обоев нет» было бы ложным,
-			// а ошибка не должна останавливать экспорт остальных модулей.
 			return nil, fmt.Errorf("файл обоев %s: %w", cur.Path, err)
 		}
 		name := "wallpaper" + strings.ToLower(filepath.Ext(cur.Path))

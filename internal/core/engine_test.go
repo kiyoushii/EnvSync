@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -325,6 +326,40 @@ func TestBrokenModulePlanDoesNotStopOthers(t *testing.T) {
 	}
 	if _, _, err := B.Apply(ctx, nil); err != nil || b1.value != "new" || b2.value != "old" {
 		t.Fatalf("good=%s broken=%s err=%v", b1.value, b2.value, err)
+	}
+}
+
+// brokenExportModule не может снять состояние (например, файл настройки недоступен).
+type brokenExportModule struct{ fakeModule }
+
+func (b *brokenExportModule) Export(context.Context, string) (json.RawMessage, error) {
+	return nil, errors.New("файл недоступен")
+}
+
+// Сбой снимка одного модуля не блокирует план и применение остальных.
+func TestBrokenExportDoesNotBlockOtherModules(t *testing.T) {
+	state, clk := t.TempDir(), &clock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	ctx := context.Background()
+	a1, a2 := &fakeModule{name: "good", value: "new"}, &fakeModule{name: "broken", value: "new"}
+	b1 := &fakeModule{name: "good", value: "old"}
+	b2 := &brokenExportModule{fakeModule{name: "broken", value: "old"}}
+	A, B := machine(t, "A", state, clk, a1, a2), machine(t, "B", state, clk, b1, b2)
+	A.Export(ctx)
+	B.Export(ctx) // у B снимок сломанного модуля не снялся, остальное снялось
+
+	if plan, err := B.PlanFrom(ctx, "A", nil); err != nil || len(plan) == 0 {
+		t.Fatalf("план должен строиться, несмотря на сбой снимка: %+v err=%v", plan, err)
+	}
+	if _, _, err := B.ApplyFrom(ctx, "A", nil); err != nil || b1.value != "new" {
+		t.Fatalf("исправный модуль должен примениться: %s err=%v", b1.value, err)
+	}
+	var logged bool
+	entries, _ := B.Journal.Recent(0)
+	for _, e := range entries {
+		logged = logged || (e.Action == "error" && strings.Contains(e.Detail, "снимок"))
+	}
+	if !logged {
+		t.Fatalf("сбой снимка должен быть в журнале: %v", entries)
 	}
 }
 
