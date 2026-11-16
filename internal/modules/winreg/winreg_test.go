@@ -211,6 +211,41 @@ func TestRollbackAfterPartialFailure(t *testing.T) {
 	}
 }
 
+// Защищённый ключ (как TaskbarDa под UCPD): запись запрещена. Применение падает, а откат не должен
+// спотыкаться о него, потому что значение не менялось.
+type protectedBackend struct {
+	*fakeBackend
+	protected string
+}
+
+func (p protectedBackend) Set(key, name string, v Value) error {
+	if name == p.protected {
+		return errors.New("Access is denied.")
+	}
+	return p.fakeBackend.Set(key, name, v)
+}
+
+func TestRollbackSkipsUnchangedProtectedKey(t *testing.T) {
+	fb := newFake()
+	fb.vals[k(`K\A`, "Num")] = dw("1")
+	fb.vals[k(`K\A`, "Str")] = &Value{Type: "string", Data: "old"}
+	be := protectedBackend{fakeBackend: fb, protected: "Str"}
+	m := New("m", testSpecs, be, nil)
+	ctx := context.Background()
+	snap := newSnap(t)
+
+	err := m.Apply(ctx, desired(t, map[string]*Value{"a.dword": dw("2"), "a.string": {Type: "string", Data: "new"}}), "", snap)
+	if err == nil {
+		t.Fatal("запись защищённого ключа должна дать ошибку")
+	}
+	if err := m.Rollback(ctx, snap); err != nil {
+		t.Fatalf("откат не должен трогать неизменённый защищённый ключ: %v", err)
+	}
+	if fb.vals[k(`K\A`, "Num")].Data != "1" || fb.vals[k(`K\A`, "Str")].Data != "old" {
+		t.Fatalf("после отката: %+v", fb.vals)
+	}
+}
+
 func TestSpecsAreSane(t *testing.T) {
 	seen := map[string]bool{}
 	for _, list := range [][]Spec{AppearanceSpecs, ExplorerSpecs, RegionalSpecs} {
@@ -231,6 +266,9 @@ func TestSpecsAreSane(t *testing.T) {
 	}
 	if len(seen) < 20 {
 		t.Errorf("белый список подозрительно короткий: %d", len(seen))
+	}
+	if seen["taskbar.widgets"] {
+		t.Error("TaskbarDa защищён Windows (UCPD) и не должен быть в белом списке")
 	}
 	_ = fmt.Sprint
 }

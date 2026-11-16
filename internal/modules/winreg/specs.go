@@ -36,7 +36,8 @@ var ExplorerSpecs = []Spec{
 	{ID: "explorer.launch_to", Key: keyAdvanced, Name: "LaunchTo", Type: "dword", Apply: Explorer},
 	{ID: "taskbar.align", Key: keyAdvanced, Name: "TaskbarAl", Type: "dword", Apply: Explorer},
 	{ID: "taskbar.task_view", Key: keyAdvanced, Name: "ShowTaskViewButton", Type: "dword", Apply: Explorer},
-	{ID: "taskbar.widgets", Key: keyAdvanced, Name: "TaskbarDa", Type: "dword", Apply: Explorer},
+	// taskbar.widgets (TaskbarDa) сознательно не включён: с Windows 11 23H2 его защищает системный драйвер UCPD,
+	// запись сторонней программой даёт «Access denied» (проверено на ноутбуке владельца 16.11.2026).
 	{ID: "taskbar.chat", Key: keyAdvanced, Name: "TaskbarMn", Type: "dword", Apply: Explorer},
 	{ID: "taskbar.copilot", Key: keyAdvanced, Name: "ShowCopilotButton", Type: "dword", Apply: Explorer},
 	{ID: "taskbar.search_mode", Key: keySearch, Name: "SearchboxTaskbarMode", Type: "dword", Apply: Explorer},

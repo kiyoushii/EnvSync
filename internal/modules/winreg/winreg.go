@@ -193,6 +193,11 @@ func (m *Module) Rollback(ctx context.Context, snap *core.Snapshot) error {
 		if !had {
 			continue
 		}
+		// Значение и так как было (например, запись не удалась до него): не трогаем. Иначе защищённый ключ,
+		// который применение изменить не смогло, сорвал бы и откат.
+		if cur, err := m.be.Get(s.Key, s.Name); err == nil && equal(cur, v) {
+			continue
+		}
 		var err error
 		if v == nil {
 			err = m.be.Delete(s.Key, s.Name)
